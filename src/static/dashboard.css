@@ -1,0 +1,540 @@
+/* Permanently dark, to match the OpenStreetMap dark basemap -- this dashboard
+   is a map-first view, not a document that should follow the OS theme. */
+:root {
+  --color-bg: #17181a;
+  --color-surface: #202226;
+  --color-surface-translucent: rgba(28, 29, 33, 0.82);
+  --color-border: #34363b;
+  --color-text: #f1f1f3;
+  --color-text-muted: #9a9aa4;
+  --color-accent: #5b8def;
+  --color-danger: #ff8a80;
+  --color-danger-bg: rgba(42, 22, 22, 0.92);
+
+  --radius: 8px;
+  --radius-lg: 14px;
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  --sidebar-width: 400px;
+  --toolbar-height: 34px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-bg);
+  line-height: 1.45;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.page-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.last-updated {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.map-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+#map {
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg);
+  /* Leaflet's internal panes use z-index up to 1000 (.leaflet-pane,
+     .leaflet-top/.leaflet-bottom). Without this, #map never establishes its
+     own stacking context, so those z-indices leak out and out-rank the
+     sidebar/toolbar/error-banner's z-index:10, painting the whole map on top
+     of them instead of underneath. */
+  isolation: isolate;
+}
+
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+}
+
+.leaflet-bar,
+.leaflet-control-zoom a {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.leaflet-control-zoom a:hover {
+  background: var(--color-border);
+}
+
+.leaflet-control-attribution {
+  background: var(--color-surface-translucent);
+  color: var(--color-text-muted);
+}
+
+.leaflet-control-attribution a {
+  color: var(--color-text-muted);
+}
+
+button {
+  font: inherit;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* --- Floating chrome over the map ------------------------------------- */
+
+.map-toolbar {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  z-index: 10;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.map-toolbar .field {
+  display: flex;
+}
+
+.map-toolbar select,
+.btn-floating {
+  font: inherit;
+  font-size: 0.85rem;
+  height: var(--toolbar-height);
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(10px);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0 var(--space-3);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+}
+
+.btn-floating:hover {
+  border-color: var(--color-accent);
+}
+
+.btn-floating[aria-pressed="true"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+}
+
+/* Stacked below the toolbar via flow layout (not a hardcoded top offset that
+   would silently drift out of sync with the toolbar's real height). */
+.banner-stack {
+  position: absolute;
+  top: calc(var(--space-4) + var(--toolbar-height) + var(--space-2));
+  right: var(--space-4);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 320px;
+}
+
+.error-banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  font-size: 0.85rem;
+  box-shadow: var(--shadow-md);
+}
+
+.empty-state {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  background: rgba(23, 24, 26, 0.85);
+}
+
+:where(.empty-state, .list-empty)[hidden] {
+  display: none;
+}
+
+/* --- Sidebar ------------------------------------------------------------ */
+
+.sidebar {
+  position: absolute;
+  top: var(--space-4);
+  bottom: var(--space-4);
+  left: var(--space-4);
+  z-index: 10;
+  width: var(--sidebar-width);
+  max-width: calc(100% - 2 * var(--space-4));
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.tab-switcher {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  margin: var(--space-3);
+  padding: 2px;
+  background: var(--color-bg);
+  border-radius: 999px;
+}
+
+.tab-button {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: var(--space-2) var(--space-2);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.tab-button.is-active {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.sidebar-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sort-group {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.sort-chip {
+  background: none;
+  border: none;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sort-chip.is-active {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+.sort-indicator {
+  font-size: 0.65rem;
+  color: var(--color-accent);
+}
+
+.select-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.btn-ghost {
+  background: transparent;
+  border: none;
+  color: var(--color-accent);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.btn-ghost:hover {
+  background: var(--color-border);
+}
+
+.device-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.device-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  /* Set per-row in JS to the device's palette color; used by the
+     selected-row tint below so it reads as "this device's color" rather
+     than a generic highlight. */
+  --row-accent: var(--color-border);
+}
+
+.device-row:hover {
+  background: var(--color-border);
+}
+
+.device-row.is-selected {
+  background: color-mix(in srgb, var(--row-accent) 16%, var(--color-surface));
+}
+
+.device-row.is-selected:hover {
+  background: color-mix(in srgb, var(--row-accent) 24%, var(--color-surface));
+}
+
+.device-row.no-fix {
+  opacity: 0.45;
+}
+
+/* Custom checkbox: a plain ring that fills solid when checked, instead of the
+   native checkmark glyph -- the row's own background tint (above) is the
+   primary "this one's selected" signal, so this only needs to read as a
+   small on/off dot up close. */
+.device-checkbox {
+  flex-shrink: 0;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-text-muted);
+  cursor: pointer;
+}
+
+.device-checkbox:checked {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.avatar-button {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.device-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: var(--space-1) 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Deliberately not colored by device identity -- that's what the row's
+     color bar is for. A flat neutral shade a touch lighter than the sidebar
+     background keeps this reading as a plain icon slot. */
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text);
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.avatar-button:hover .avatar {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* The current-position marker on the map (Leaflet divIcon). */
+.device-marker-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  border: 2px solid #ffffff;
+  box-shadow: var(--shadow-md);
+}
+
+.device-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.device-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.device-subtitle {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-empty {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* --- Icon editor dialog -------------------------------------------------- */
+
+.icon-dialog {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-4);
+  min-width: 260px;
+}
+
+.icon-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.icon-dialog-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+}
+
+.icon-dialog-input {
+  font: inherit;
+  font-size: 1.1rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+}
+
+.icon-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+/* --- Small screens -------------------------------------------------------
+   Below this width the sidebar becomes a bottom sheet capped at half the
+   viewport height, instead of an absolutely-positioned panel wide enough to
+   cover nearly the whole map. */
+
+@media (max-width: 640px) {
+  .sidebar {
+    top: auto;
+    left: var(--space-2);
+    right: var(--space-2);
+    bottom: var(--space-2);
+    width: auto;
+    max-width: none;
+    max-height: 50vh;
+  }
+
+  .map-toolbar {
+    left: var(--space-2);
+    right: var(--space-2);
+    top: var(--space-2);
+  }
+
+  .map-toolbar .field {
+    flex: 1;
+  }
+
+  .map-toolbar select {
+    width: 100%;
+  }
+
+  .banner-stack {
+    left: var(--space-2);
+    right: var(--space-2);
+    max-width: none;
+  }
+}

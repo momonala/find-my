@@ -1,0 +1,124 @@
+[project]
+name = "test-find-my"
+version = "0.1.0"
+description = "CLI for Apple Find My: locate iCloud devices and AirTags with distance from home"
+authors = [{name = "Mohit Nalavadi"}]
+readme = "README.md"
+# Upper bound is deliberate: cryptography (via pyicloud) has no 3.14 wheel yet,
+# so 3.14 falls back to a Rust build that fails. Relax once wheels ship.
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "typer>=0.9.0",
+    "python-dotenv>=1.0.0",
+    "flask>=3.0.0",
+    "pyicloud>=2.6.5",
+    "schedule>=1.2.0",
+    # Pinned exactly: src/batch_reports.py drives semi-internal APIs
+    # (fetch_raw_reports, LocationReport.decrypt, update_alignment) that this
+    # reverse-engineered library can change in a patch release.
+    "findmy==0.10.1",
+]
+
+# Test and lint tooling only -- `uv sync --no-dev` on the deploy target installs
+# none of this. test-and-lint.sh and .github/workflows/ci.yml drive these.
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "black",
+    "ruff>=0.14.10",
+    "mypy>=1.11.0",
+]
+
+[tool.config]
+# Reference point that Find My distances are measured from. Five decimal places
+# is ~1m of latitude (and ~0.7m of longitude at this latitude), which is all the
+# resolution this needs.
+home_latitude = 52.55214
+home_longitude = 13.39984
+# Port `findmy serve` binds by default, and the one install/install.sh points
+# the Cloudflare tunnel at.
+flask_port = 5016
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[project.scripts]
+config = "src.config:main"
+findmy = "src.cli:main"
+scheduler = "src.data_backup_scheduler:main"
+
+[tool.black]
+line-length = 110
+target-version = ['py313']
+include = '\.pyi?$'
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+# black owns formatting, so this is lint-only. `I` with force-single-line keeps
+# the one-import-per-line style the codebase already uses.
+select = ["E", "F", "I", "B", "UP", "SIM", "A", "G", "PTH", "RET", "ARG"]
+ignore = [
+    # Typer's whole calling convention is function defaults that call typer.Option().
+    "B008",
+    # `class Foo(str, enum.Enum)` is deliberate here, not dated: it's what makes
+    # typer accept these as CLI choices and print their bare value. StrEnum
+    # would likely work too, but converting is a separate, riskier change.
+    "UP042",
+]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.per-file-ignores]
+# Tests shadow builtins in fixtures and don't need every argument used.
+"tests/*" = ["ARG001", "ARG002"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+# src/ has no __init__.py (a deliberate namespace package, not a mypy oversight),
+# so without this mypy sees "src/batch_reports.py" as two different modules
+# depending on whether it's imported as `batch_reports` or `src.batch_reports`.
+explicit_package_bases = true
+mypy_path = "."
+
+[[tool.mypy.overrides]]
+# Neither ships type stubs or a py.typed marker.
+module = ["pyicloud.*", "findmy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# Coverage runs on every invocation (CI, test-and-lint.sh, and local `uv run
+# pytest`) so all three stay in sync; capture stays on so a stray print can't
+# corrupt output. Codecov upload in CI needs the xml report specifically.
+addopts = "-q --cov=src --cov-report=term-missing --cov-report=xml"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*", "*/test_*.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+# No `exclude-newer`: a relative window ("1 week") makes resolution depend on the
+# day it runs, which defeats the point of committing uv.lock.
