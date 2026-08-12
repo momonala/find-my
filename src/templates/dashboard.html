@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Find My dashboard</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <header class="page-header">
+    <h1>Find My dashboard</h1>
+    <p id="last-updated" class="last-updated">Last updated —</p>
+  </header>
+
+  <main class="map-shell">
+    <div id="map" role="region" aria-label="Map of selected devices' locations over the chosen time range"></div>
+    <p id="track-empty" class="empty-state" hidden>No location history for the selected devices in this range.</p>
+
+    <div class="map-toolbar">
+      <button type="button" id="history-toggle" class="btn-floating" aria-pressed="false">History</button>
+      <label class="field">
+        <span class="visually-hidden">Time range</span>
+        <select id="time-range">
+          <option value="1">Last hour</option>
+          <option value="6">Last 6 hours</option>
+          <option value="24" selected>Last 24 hours</option>
+          <option value="168">Last 7 days</option>
+          <option value="0">All time</option>
+        </select>
+      </label>
+      <button type="button" id="refresh" class="btn-floating">Refresh</button>
+      <button type="button" id="auto-refresh-toggle" class="btn-floating" aria-pressed="true">Auto</button>
+    </div>
+
+    <!-- Persistent problems (map init failed) that a track refresh should not
+         silently clear -- see clearError() in dashboard.js. -->
+    <div class="banner-stack">
+      <p id="fatal-banner" class="error-banner" role="alert" hidden></p>
+      <p id="error-banner" class="error-banner" role="alert" hidden></p>
+    </div>
+
+    <aside class="sidebar" aria-label="Devices and items">
+      <div class="tab-switcher" role="tablist" aria-label="Category">
+        <button type="button" class="tab-button" role="tab" id="tab-device" aria-controls="device-list" data-tab="device">Devices</button>
+        <button type="button" class="tab-button" role="tab" id="tab-item" aria-controls="device-list" data-tab="item">Items</button>
+      </div>
+
+      <div class="sidebar-toolbar">
+        <div class="sort-group" role="group" aria-label="Sort by">
+          <button type="button" class="sort-chip" data-sort-key="name">Name<span class="sort-indicator"></span></button>
+          <button type="button" class="sort-chip" data-sort-key="kind">Kind<span class="sort-indicator"></span></button>
+          <button type="button" class="sort-chip" data-sort-key="seen_at">Recent<span class="sort-indicator"></span></button>
+          <button type="button" class="sort-chip" data-sort-key="distance">Distance<span class="sort-indicator"></span></button>
+        </div>
+        <div class="select-actions">
+          <button type="button" id="select-all" class="btn-ghost">All</button>
+          <button type="button" id="select-none" class="btn-ghost">None</button>
+        </div>
+      </div>
+
+      <ul id="device-list" class="device-list" role="tabpanel" aria-labelledby="tab-device"></ul>
+      <p id="device-empty" class="list-empty" hidden>
+        No devices yet. Run the poller (<code>uv run findmy serve</code>) and wait for a fetch cycle.
+      </p>
+    </aside>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>

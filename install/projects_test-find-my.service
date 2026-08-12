@@ -1,0 +1,18 @@
+[Unit]
+Description=Find My dashboard and read-only API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/mnalavadi/test-find-my
+Type=simple
+# --no-poll: the fetch loop is its own unit (projects_test-find-my-backup runs
+# the backup timer; run `findmy poll` separately if this host can reach Apple),
+# so exactly one process ever writes to data/findmy.db.
+ExecStart=/home/mnalavadi/.local/bin/uv run findmy serve --host 0.0.0.0 --port 5016 --no-poll
+User=mnalavadi
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

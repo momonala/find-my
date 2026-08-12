@@ -1,0 +1,15 @@
+[Unit]
+Description=Git commit scheduler for backing up the Find My location database
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/mnalavadi/test-find-my
+Type=simple
+ExecStart=/home/mnalavadi/.local/bin/uv run scheduler
+User=mnalavadi
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
