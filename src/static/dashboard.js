@@ -262,9 +262,10 @@
         // The current position gets a labeled marker (emoji, or a monogram
         // fallback); earlier fixes stay plain dots so the track reads clearly.
         if (isLatest && device) {
-          L.marker([point.latitude, point.longitude], { icon: buildMarkerIcon(device) })
+          const marker = L.marker([point.latitude, point.longitude], { icon: buildMarkerIcon(device) })
             .addTo(trackLayerGroup)
             .bindTooltip(buildTooltipNode(deviceId, point.seen_at));
+          marker.on("click", () => openAlertDialog(marker.getElement(), deviceId));
           return;
         }
 
@@ -365,6 +366,10 @@
       }
       return sign * String(a[key]).localeCompare(String(b[key]));
     });
+  }
+
+  function sortedAlerts() {
+    return [...state.alerts].sort((a, b) => a.device_name.localeCompare(b.device_name));
   }
 
   function updateSortIndicators() {
@@ -471,7 +476,7 @@
     if (state.activeTab === "alert") {
       deviceEmptyEl.hidden = true;
       alertEmptyEl.hidden = state.alerts.length > 0;
-      for (const alert of state.alerts) {
+      for (const alert of sortedAlerts()) {
         deviceListEl.append(buildAlertListRow(alert));
       }
       return;
@@ -766,7 +771,7 @@
     return dialog;
   }
 
-  function openAlertDialog(triggerElement) {
+  function openAlertDialog(triggerElement, preselectDeviceId) {
     if (state.devices.length === 0) return;
 
     alertDialog ??= buildAlertDialog();
@@ -779,6 +784,7 @@
       option.textContent = `${device.icon || "❓"} ${device.name}`;
       alertDialogDeviceSelect.append(option);
     }
+    if (preselectDeviceId != null) alertDialogDeviceSelect.value = String(preselectDeviceId);
 
     alertDialogTypeSelect.value = "movement";
     alertDialogThresholdInput.value = "100";
