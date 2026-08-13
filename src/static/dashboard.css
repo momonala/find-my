@@ -443,6 +443,17 @@ input:focus-visible {
   box-shadow: 0 0 0 3px var(--color-danger), var(--shadow-md);
 }
 
+/* The item currently highlighted from the Alerts tab (state.alertFocusDeviceId)
+   -- a focus ring distinct from has-active-alert's danger ring, since the
+   focused item isn't necessarily also currently triggered. */
+.device-marker-badge.is-alert-focus {
+  box-shadow: 0 0 0 3px var(--color-accent), var(--shadow-md);
+}
+
+.device-marker-badge.is-alert-focus.has-active-alert {
+  box-shadow: 0 0 0 3px var(--color-accent), 0 0 0 6px var(--color-danger), var(--shadow-md);
+}
+
 .device-text {
   display: flex;
   flex-direction: column;
