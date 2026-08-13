@@ -1,10 +1,13 @@
-"""Read-only Flask API over the SQLite data the background poller maintains.
+"""Mostly-read-only Flask API over the SQLite data the background poller maintains.
 
-Every route only reads `src.db` -- no request ever waits on a live Apple
+Most routes only read `src.db` -- no request ever waits on a live Apple
 fetch, which is the whole point of polling in the background instead of
-fetching on demand. The one exception is `PUT /locations/<id>/icon`, which
-stores a user-chosen marker emoji. See src/poller.py for how the data gets
-there and `uv run findmy serve --help` for how to run this.
+fetching on demand. The exceptions are `PUT /locations/<id>/icon`, which
+stores a user-chosen marker emoji, and `POST /alerts` / `DELETE
+/alerts/<id>`, which manage user-configured movement/proximity alerts
+(evaluated by src/alerts.py from the poller, not from a request). See
+src/poller.py for how the data gets there and `uv run findmy serve --help`
+for how to run this.
 
 `/dashboard` serves a small HTML page (src/templates/dashboard.html,
 src/static/dashboard.{css,js}) that plots device tracks on a Leaflet/OpenStreetMap
@@ -13,6 +16,7 @@ not a server-rendered view, so it has no server-side state of its own.
 """
 
 import atexit
+import math
 import sqlite3
 from typing import Any
 
@@ -29,14 +33,20 @@ from src.config import HOME_LATITUDE
 from src.config import HOME_LONGITUDE
 from src.db import all_latest_locations
 from src.db import connection
+from src.db import create_alert
+from src.db import get_alert
 from src.db import history_for
 from src.db import init_db
 from src.db import last_updated
 from src.db import latest_location_for
+from src.db import list_alerts
+from src.db import remove_alert
 from src.db import set_device_icon
 from src.env import API_WRITE_TOKEN
 from src.poller import start_background_poller
 from src.tracking import distance_from_home_m_at
+
+_VALID_ALERT_TYPES = {"movement", "proximity"}
 
 # Sensible fallback emoji for common Apple device kinds (src/find_my.py's
 # `device.device_type` values), used until a user sets their own via
@@ -103,6 +113,45 @@ def _parse_icon_payload() -> str | None:
     if any(not character.isprintable() for character in emoji):
         abort(400, description="'emoji' must not contain control characters.")
     return emoji
+
+
+def _serialize_alert(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "device_id": row["device_id"],
+        "device_name": row["device_name"],
+        "device_icon": row["device_icon"],
+        "alert_type": row["alert_type"],
+        "threshold_m": row["threshold_m"],
+        "created_at": row["created_at"],
+        "is_active": bool(row["is_active"]),
+        "triggered_at": row["triggered_at"],
+    }
+
+
+def _parse_alert_payload() -> tuple[str, str, float]:
+    """Return (device_id, alert_type, threshold_m) from the request body, aborting 400 on junk."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        abort(
+            400, description="Body must be a JSON object with 'device_id', 'alert_type', and 'threshold_m'."
+        )
+
+    device_id = payload.get("device_id")
+    if not isinstance(device_id, str) or not device_id:
+        abort(400, description="'device_id' must be a non-empty string.")
+
+    alert_type = payload.get("alert_type")
+    if alert_type not in _VALID_ALERT_TYPES:
+        abort(400, description=f"'alert_type' must be one of: {', '.join(sorted(_VALID_ALERT_TYPES))}.")
+
+    threshold_m = payload.get("threshold_m")
+    if isinstance(threshold_m, bool) or not isinstance(threshold_m, (int, float)):
+        abort(400, description="'threshold_m' must be a number.")
+    if not math.isfinite(threshold_m) or threshold_m <= 0:
+        abort(400, description="'threshold_m' must be a finite number greater than 0.")
+
+    return device_id, alert_type, float(threshold_m)
 
 
 def _require_write_token() -> None:
@@ -193,5 +242,31 @@ def create_app(start_poller: bool = True) -> Flask:
         if rows is None:
             abort(404)
         return jsonify([_serialize_fix(row) for row in rows])
+
+    @app.get("/alerts")
+    def get_alerts() -> ResponseReturnValue:
+        with connection() as conn:
+            rows = list_alerts(conn)
+        return jsonify([_serialize_alert(row) for row in rows])
+
+    @app.post("/alerts")
+    def post_alert() -> ResponseReturnValue:
+        _require_write_token()
+        device_id, alert_type, threshold_m = _parse_alert_payload()
+        with connection() as conn:
+            alert_id = create_alert(conn, device_id, alert_type, threshold_m)
+            if alert_id is None:
+                abort(404, description=f"Unknown device_id: {device_id!r}.")
+            row = get_alert(conn, alert_id)
+            assert row is not None
+        return jsonify(_serialize_alert(row)), 201
+
+    @app.delete("/alerts/<int:alert_id>")
+    def delete_alert(alert_id: int) -> ResponseReturnValue:
+        _require_write_token()
+        with connection() as conn:
+            if not remove_alert(conn, alert_id):
+                abort(404)
+        return "", 204
 
     return app

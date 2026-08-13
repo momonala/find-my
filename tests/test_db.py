@@ -5,12 +5,19 @@ These tests verify that:
 2. A history row is written only when coordinates actually change
 3. Latest-location and history lookups distinguish "no fix yet" from "unknown device"
 4. Marker emoji can be set and cleared
+5. Alerts can be created, listed, deleted, and have their triggered state updated
 """
 
+from src.db import alerts_for_device
 from src.db import all_latest_locations
+from src.db import create_alert
+from src.db import get_alert
 from src.db import history_for
 from src.db import latest_location_for
+from src.db import list_alerts
 from src.db import record_fetch
+from src.db import remove_alert
+from src.db import set_alert_state
 from src.db import set_device_icon
 from tests.conftest import make_item
 from tests.conftest import make_location
@@ -94,6 +101,62 @@ def test_clearing_device_icon_removes_it(conn):
 
 def test_set_device_icon_for_unknown_device_returns_false(conn):
     assert set_device_icon(conn, "does-not-exist", "🚲") is False
+
+
+# --- Alerts ------------------------------------------------------------------
+
+
+def test_create_alert_for_unknown_device_returns_none(conn):
+    assert create_alert(conn, "does-not-exist", "movement", 100) is None
+
+
+def test_create_alert_is_reflected_in_list_and_device_lookups(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+
+    alert_id = create_alert(conn, "tag-1", "movement", 150)
+
+    assert alert_id is not None
+    row = get_alert(conn, alert_id)
+    assert row["device_id"] == "tag-1"
+    assert row["alert_type"] == "movement"
+    assert row["threshold_m"] == 150
+    assert row["is_active"] == 0
+    assert row["triggered_at"] is None
+    assert [row["id"] for row in list_alerts(conn)] == [alert_id]
+    assert [row["id"] for row in alerts_for_device(conn, "tag-1")] == [alert_id]
+
+
+def test_alerts_for_device_is_empty_for_a_device_with_no_alerts(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+
+    assert alerts_for_device(conn, "tag-1") == []
+
+
+def test_remove_alert_deletes_it(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+    alert_id = create_alert(conn, "tag-1", "proximity", 100)
+
+    assert remove_alert(conn, alert_id) is True
+    assert get_alert(conn, alert_id) is None
+
+
+def test_remove_unknown_alert_returns_false(conn):
+    assert remove_alert(conn, 999) is False
+
+
+def test_set_alert_state_updates_is_active_and_triggered_at(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+    alert_id = create_alert(conn, "tag-1", "proximity", 100)
+
+    set_alert_state(conn, alert_id, is_active=True, triggered_at="2026-01-01T00:00:00+00:00")
+
+    row = get_alert(conn, alert_id)
+    assert row["is_active"] == 1
+    assert row["triggered_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_set_alert_state_for_unknown_alert_is_a_no_op(conn):
+    set_alert_state(conn, 999, is_active=True, triggered_at="2026-01-01T00:00:00+00:00")  # must not raise
 
 
 def test_init_db_is_idempotent(conn, tmp_path):
