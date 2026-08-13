@@ -586,6 +586,10 @@ input:focus-visible {
    are alert-specific: the delete button takes the checkbox+avatar-button's
    place, and .device-text needs its own flex-grow since it's not wrapped in
    the device row's .device-main button here. */
+.alert-list-row {
+  cursor: pointer;
+}
+
 .alert-list-row .device-text {
   flex: 1;
   min-width: 0;
