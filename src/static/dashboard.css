@@ -194,16 +194,21 @@ input:focus-visible {
 
 .empty-state {
   position: absolute;
-  inset: 0;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  max-width: min(320px, calc(100% - 2 * var(--space-4)));
   text-align: center;
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   color: var(--color-text-muted);
   font-size: 0.9rem;
-  background: rgba(23, 24, 26, 0.85);
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
 }
 
 :where(.empty-state, .list-empty)[hidden] {
@@ -431,6 +436,13 @@ input:focus-visible {
   box-shadow: var(--shadow-md);
 }
 
+/* A device with a currently-triggered alert -- shared between the map marker
+   and the sidebar avatar so the same device reads as "flagged" in both. */
+.device-marker-badge.has-active-alert,
+.avatar.has-active-alert {
+  box-shadow: 0 0 0 3px var(--color-danger), var(--shadow-md);
+}
+
 .device-text {
   display: flex;
   flex-direction: column;
@@ -500,6 +512,98 @@ input:focus-visible {
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-4);
+}
+
+/* --- Add-alert dialog: same look as the icon-editor dialog --------------- */
+
+.alert-dialog {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-4);
+  min-width: 260px;
+}
+
+.alert-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.alert-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.alert-dialog-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+}
+
+.alert-dialog-select {
+  font: inherit;
+  font-size: 0.9rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+}
+
+.alert-threshold-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.alert-threshold-input {
+  font: inherit;
+  font-size: 0.9rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  width: 72px;
+}
+
+.alert-threshold-unit {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.alert-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* An alert row reuses .device-row/.device-text/.device-name/.device-subtitle
+   directly (see buildAlertListRow in dashboard.js) -- only these two rules
+   are alert-specific: the delete button takes the checkbox+avatar-button's
+   place, and .device-text needs its own flex-grow since it's not wrapped in
+   the device row's .device-main button here. */
+.alert-list-row .device-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-subtitle.is-alert-active {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.alert-delete-button {
+  flex-shrink: 0;
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.alert-delete-button:hover {
+  background: var(--color-danger-bg);
 }
 
 /* --- Small screens -------------------------------------------------------

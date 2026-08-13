@@ -78,21 +78,30 @@ def require_credentials() -> tuple[str, str]:
     return ICLOUD_USERNAME, ICLOUD_PASSWORD
 
 
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two points, in meters.
+
+    This is the project's only haversine -- the dashboard reads `distance_m`
+    off the API rather than recomputing it, and src/alerts.py's movement
+    check reuses this rather than a second implementation.
+    """
+    rad_lat1, rad_lon1 = math.radians(lat1), math.radians(lon1)
+    rad_lat2, rad_lon2 = math.radians(lat2), math.radians(lon2)
+
+    half_chord = (
+        math.sin((rad_lat2 - rad_lat1) / 2) ** 2
+        + math.cos(rad_lat1) * math.cos(rad_lat2) * math.sin((rad_lon2 - rad_lon1) / 2) ** 2
+    )
+    return 2 * _EARTH_RADIUS_M * math.asin(math.sqrt(half_chord))
+
+
 def distance_from_home_m_at(latitude: float, longitude: float) -> float:
     """Great-circle distance from the configured home coordinates, in meters.
 
     Takes raw coordinates so callers holding a DB row (src/api.py) can use it
-    without first building a `Location`. This is the project's only haversine --
-    the dashboard reads `distance_m` off the API rather than recomputing it.
+    without first building a `Location`.
     """
-    home_lat, home_lon = math.radians(HOME_LATITUDE), math.radians(HOME_LONGITUDE)
-    lat, lon = math.radians(latitude), math.radians(longitude)
-
-    half_chord = (
-        math.sin((lat - home_lat) / 2) ** 2
-        + math.cos(home_lat) * math.cos(lat) * math.sin((lon - home_lon) / 2) ** 2
-    )
-    return 2 * _EARTH_RADIUS_M * math.asin(math.sqrt(half_chord))
+    return haversine_m(HOME_LATITUDE, HOME_LONGITUDE, latitude, longitude)
 
 
 def distance_from_home_m(location: Location) -> float:

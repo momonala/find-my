@@ -1,15 +1,16 @@
 """SQLite persistence for the Flask API: current devices, location history,
-and user-assigned marker emoji.
+user-assigned marker emoji, and configured alerts.
 
-Three tables: `devices` holds the latest known metadata per device (upserted
+Four tables: `devices` holds the latest known metadata per device (upserted
 on every poll), `location_history` holds one row per fix but only when a
 fix's coordinates differ from the previously stored one for that device --
-repeated identical reports from Apple's network don't grow the table -- and
+repeated identical reports from Apple's network don't grow the table --
 `device_icons` holds an optional emoji per device, set via the API rather
 than fetched from Apple (see src/api.py's PUT /locations/<id>/icon -- Apple
 doesn't expose the per-item emoji you pick in the Find My app to either
-`pyicloud` or `findmy`). See src/poller.py for what writes here and
-src/api.py for what reads it.
+`pyicloud` or `findmy`), and `alerts` holds user-configured movement/proximity
+alerts, evaluated by src/alerts.py from the background poller. See
+src/poller.py for what writes here and src/api.py for what reads it.
 """
 
 import sqlite3
@@ -18,6 +19,7 @@ from contextlib import contextmanager
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 from typing import cast
 
 from src.tracking import TrackedItem
@@ -52,7 +54,20 @@ CREATE TABLE IF NOT EXISTS device_icons (
     device_id TEXT PRIMARY KEY REFERENCES devices(id),
     emoji TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL REFERENCES devices(id),
+    alert_type TEXT NOT NULL CHECK(alert_type IN ('movement', 'proximity')),
+    threshold_m REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    triggered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts (device_id);
 """
+# No ON DELETE CASCADE on alerts.device_id, and this connection never sets
+# PRAGMA foreign_keys=ON -- both fine today since no route deletes a device
+# row, but worth knowing if one ever gets added.
 
 # One row per device: its most recent location_history fix, if it has any.
 _LATEST_PER_DEVICE = """
@@ -106,19 +121,32 @@ def init_db(path: Path | None = None) -> None:
         conn.commit()
 
 
-def record_fetch(conn: sqlite3.Connection, items: list[TrackedItem]) -> dict[str, tuple[int, int]]:
+class FetchResult(NamedTuple):
+    """What a poll cycle did: write counts per source, and which devices moved.
+
+    `moved_device_ids` is exactly the set of devices that got a new
+    `location_history` row this cycle -- src.alerts.check_alerts uses it to
+    only re-evaluate alerts where something could actually have changed.
+    """
+
+    counts: dict[str, tuple[int, int]]
+    moved_device_ids: set[str]
+
+
+def record_fetch(conn: sqlite3.Connection, items: list[TrackedItem]) -> FetchResult:
     """Upsert device metadata, and append a history row only on a coordinate change.
 
     The whole cycle is one transaction, so a failure partway through a batch
     rolls back rather than leaving some devices updated and others not.
 
-    Returns, per `item.source` ("device" or "item"), how many of the fetched
-    items actually got a new history row written versus how many were fetched
-    -- src.poller logs this so a poll cycle's console line shows write volume,
-    not just fetch volume.
+    `counts` holds, per `item.source` ("device" or "item"), how many of the
+    fetched items actually got a new history row written versus how many were
+    fetched -- src.poller logs this so a poll cycle's console line shows write
+    volume, not just fetch volume.
     """
     now = datetime.now(UTC).isoformat()
     counts: dict[str, list[int]] = {}
+    moved_device_ids: set[str] = set()
 
     with conn:
         for item in items:
@@ -162,8 +190,12 @@ def record_fetch(conn: sqlite3.Connection, items: list[TrackedItem]) -> dict[str
                     ),
                 )
                 counts[item.source][1] += 1
+                moved_device_ids.add(item.id)
 
-    return {source: (written, fetched) for source, (fetched, written) in counts.items()}
+    return FetchResult(
+        counts={source: (written, fetched) for source, (fetched, written) in counts.items()},
+        moved_device_ids=moved_device_ids,
+    )
 
 
 def all_latest_locations(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -235,3 +267,73 @@ def history_for(
         params.append(limit)
 
     return conn.execute(query, params).fetchall()
+
+
+# The projection alert reads share, joined with devices for a name/icon to
+# display without a second query. Callers append their own WHERE/ORDER BY.
+_ALERT_WITH_DEVICE = """
+SELECT a.id, a.device_id, d.name AS device_name, di.emoji AS device_icon,
+       a.alert_type, a.threshold_m, a.created_at, a.is_active, a.triggered_at
+FROM alerts a
+JOIN devices d ON d.id = a.device_id
+LEFT JOIN device_icons di ON di.device_id = a.device_id
+"""
+
+
+def create_alert(conn: sqlite3.Connection, device_id: str, alert_type: str, threshold_m: float) -> int | None:
+    """Create an alert for `device_id`, returning its id, or None if unknown."""
+    if not device_exists(conn, device_id):
+        return None
+
+    now = datetime.now(UTC).isoformat()
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO alerts (device_id, alert_type, threshold_m, created_at) VALUES (?, ?, ?, ?)",
+            (device_id, alert_type, threshold_m, now),
+        )
+    return cast("int", cursor.lastrowid)
+
+
+def list_alerts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every configured alert, across all devices, newest first."""
+    return conn.execute(f"{_ALERT_WITH_DEVICE} ORDER BY a.created_at DESC").fetchall()
+
+
+def alerts_for_device(conn: sqlite3.Connection, device_id: str) -> list[sqlite3.Row]:
+    """A single device's configured alerts."""
+    return conn.execute(
+        f"{_ALERT_WITH_DEVICE} WHERE a.device_id = ? ORDER BY a.created_at", (device_id,)
+    ).fetchall()
+
+
+def get_alert(conn: sqlite3.Connection, alert_id: int) -> sqlite3.Row | None:
+    """A single alert by id, or None if unknown."""
+    return cast(
+        "sqlite3.Row | None", conn.execute(f"{_ALERT_WITH_DEVICE} WHERE a.id = ?", (alert_id,)).fetchone()
+    )
+
+
+def remove_alert(conn: sqlite3.Connection, alert_id: int) -> bool:
+    """Remove an alert. Returns False if `alert_id` is unknown.
+
+    Named `remove_alert` rather than `delete_alert` so the DELETE route in
+    src/api.py can be named `delete_alert` without shadowing this import.
+    """
+    with conn:
+        cursor = conn.execute("DELETE FROM alerts WHERE id = ?", (alert_id,))
+    return cursor.rowcount > 0
+
+
+def set_alert_state(
+    conn: sqlite3.Connection, alert_id: int, *, is_active: bool, triggered_at: str | None
+) -> None:
+    """Update an alert's triggered state.
+
+    A no-op (not an error) if `alert_id` no longer exists -- it can be deleted
+    via the API in the moment between src.alerts reading it and writing this.
+    """
+    with conn:
+        conn.execute(
+            "UPDATE alerts SET is_active = ?, triggered_at = ? WHERE id = ?",
+            (int(is_active), triggered_at, alert_id),
+        )

@@ -194,3 +194,116 @@ def test_reads_are_open_even_when_a_write_token_is_configured(client, seed, monk
     monkeypatch.setattr(api, "API_WRITE_TOKEN", "s3cret")
 
     assert client.get("/locations").status_code == 200
+
+
+# --- /alerts --------------------------------------------------------------
+
+
+def test_list_alerts_is_empty_with_no_data(client):
+    assert client.get("/alerts").get_json() == []
+
+
+def test_post_alert_creates_it(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    response = client.post(
+        "/alerts", json={"device_id": "tag-1", "alert_type": "movement", "threshold_m": 150}
+    )
+
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["device_id"] == "tag-1"
+    assert body["device_name"] == "Item tag-1"
+    assert body["alert_type"] == "movement"
+    assert body["threshold_m"] == 150
+    assert body["is_active"] is False
+    assert body["triggered_at"] is None
+    assert len(client.get("/alerts").get_json()) == 1
+
+
+def test_post_alert_for_unknown_device_is_404(client):
+    response = client.post(
+        "/alerts", json={"device_id": "does-not-exist", "alert_type": "movement", "threshold_m": 100}
+    )
+    assert response.status_code == 404
+
+
+def test_post_alert_rejects_invalid_alert_type(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    response = client.post("/alerts", json={"device_id": "tag-1", "alert_type": "bogus", "threshold_m": 100})
+
+    assert response.status_code == 400
+
+
+def test_post_alert_rejects_non_positive_threshold(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    response = client.post("/alerts", json={"device_id": "tag-1", "alert_type": "movement", "threshold_m": 0})
+
+    assert response.status_code == 400
+
+
+def test_post_alert_rejects_non_numeric_threshold(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    response = client.post(
+        "/alerts", json={"device_id": "tag-1", "alert_type": "movement", "threshold_m": "far"}
+    )
+
+    assert response.status_code == 400
+
+
+def test_post_alert_rejects_missing_body(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    assert client.post("/alerts").status_code == 400
+
+
+def test_delete_alert_removes_it(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+    created = client.post(
+        "/alerts", json={"device_id": "tag-1", "alert_type": "movement", "threshold_m": 100}
+    )
+    alert_id = created.get_json()["id"]
+
+    response = client.delete(f"/alerts/{alert_id}")
+
+    assert response.status_code == 204
+    assert client.get("/alerts").get_json() == []
+
+
+def test_delete_unknown_alert_is_404(client):
+    assert client.delete("/alerts/999").status_code == 404
+
+
+def test_post_alert_requires_token_when_configured(client, seed, monkeypatch):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+    monkeypatch.setattr(api, "API_WRITE_TOKEN", "s3cret")
+    payload = {"device_id": "tag-1", "alert_type": "movement", "threshold_m": 100}
+
+    assert client.post("/alerts", json=payload).status_code == 401
+
+    response = client.post("/alerts", json=payload, headers={"X-Api-Token": "s3cret"})
+    assert response.status_code == 201
+
+
+def test_delete_alert_requires_token_when_configured(client, seed, monkeypatch):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+    created = client.post(
+        "/alerts", json={"device_id": "tag-1", "alert_type": "movement", "threshold_m": 100}
+    )
+    alert_id = created.get_json()["id"]
+    monkeypatch.setattr(api, "API_WRITE_TOKEN", "s3cret")
+
+    assert client.delete(f"/alerts/{alert_id}").status_code == 401
+
+    response = client.delete(f"/alerts/{alert_id}", headers={"X-Api-Token": "s3cret"})
+    assert response.status_code == 204
+
+
+def test_reads_of_alerts_are_open_even_when_a_write_token_is_configured(client, seed, monkeypatch):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+    monkeypatch.setattr(api, "API_WRITE_TOKEN", "s3cret")
+
+    assert client.get("/alerts").status_code == 200

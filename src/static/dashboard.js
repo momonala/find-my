@@ -20,7 +20,11 @@
   const FALLBACK_CENTER = [0, 0];
   const EARTH_RADIUS_M = 6371008.8;
   const STATUS_POLL_MS = 30_000;
-  const TAB_KEYS = ["device", "item"];
+  const TAB_KEYS = ["device", "item", "alert"];
+  // A movement alert is an instantaneous event, not a standing state (unlike
+  // proximity, which carries `is_active`) -- this is how long its marker
+  // highlight and "Triggered" status stay shown after the fact.
+  const ALERT_RECENT_MS = 10 * 60 * 1000;
 
   const state = {
     devices: [],
@@ -30,7 +34,7 @@
     activeTab: "device",
     home: null,
     showHistory: false,
-    autoRefresh: true,
+    alerts: [],
   };
 
   let map = null;
@@ -47,13 +51,14 @@
   const sortGroupEl = document.querySelector(".sort-group");
   const timeRangeEl = document.getElementById("time-range");
   const historyToggleEl = document.getElementById("history-toggle");
-  const refreshButton = document.getElementById("refresh");
-  const autoRefreshToggleEl = document.getElementById("auto-refresh-toggle");
   const selectAllButton = document.getElementById("select-all");
   const selectNoneButton = document.getElementById("select-none");
   const trackEmptyEl = document.getElementById("track-empty");
   const errorBannerEl = document.getElementById("error-banner");
   const fatalBannerEl = document.getElementById("fatal-banner");
+  const deviceToolbarEl = document.getElementById("device-toolbar");
+  const alertEmptyEl = document.getElementById("alert-empty");
+  const alertAddOpenButton = document.getElementById("alert-add-open");
 
   // --- Error banners ---------------------------------------------------------
   //
@@ -142,6 +147,7 @@
   function buildMarkerIcon(device) {
     const badge = document.createElement("span");
     badge.className = "device-marker-badge";
+    badge.classList.toggle("has-active-alert", deviceHasActiveAlert(device.id));
     applyBadgeColors(badge, device.id);
     badge.textContent = device.icon || monogramFor(device.name);
     return L.divIcon({ className: "device-marker", html: badge, iconSize: [28, 28], iconAnchor: [14, 14] });
@@ -168,6 +174,7 @@
       }
       throw new Error(`Request to ${url} failed with status ${response.status}${detail ? `: ${detail}` : ""}`);
     }
+    if (response.status === 204) return null; // e.g. DELETE /alerts/<id> -- no body to parse.
     return response.json();
   }
 
@@ -324,6 +331,7 @@
       if (isActive && focus) button.focus();
     }
     deviceListEl.setAttribute("aria-labelledby", `tab-${tab}`);
+    deviceToolbarEl.hidden = tab === "alert";
     renderDeviceList();
   }
 
@@ -362,6 +370,7 @@
 
     const avatar = document.createElement("span");
     avatar.className = "avatar";
+    avatar.classList.toggle("has-active-alert", deviceHasActiveAlert(device.id));
     avatar.textContent = device.icon || monogramFor(device.name);
     avatar.setAttribute("aria-hidden", "true");
     avatarButton.append(avatar);
@@ -395,6 +404,17 @@
 
   function renderDeviceList() {
     deviceListEl.textContent = "";
+
+    if (state.activeTab === "alert") {
+      deviceEmptyEl.hidden = true;
+      alertEmptyEl.hidden = state.alerts.length > 0;
+      for (const alert of state.alerts) {
+        deviceListEl.append(buildAlertListRow(alert));
+      }
+      return;
+    }
+
+    alertEmptyEl.hidden = true;
     const devices = sortedDevices();
     deviceEmptyEl.hidden = devices.length > 0;
     updateSortIndicators();
@@ -507,6 +527,237 @@
     }
   }
 
+  // --- Alerts: movement / proximity-to-home, configured per device -----------
+  //
+  // Configured alerts live in their own sidebar tab (rendered into the same
+  // <ul> as the device/item tabs, styled the same way) with a delete button
+  // per row. Adding one goes through a single "Add alert" button that opens
+  // a focus-managed <dialog>, built once and reused like the icon-editor
+  // dialog -- keeps the tab itself down to a list plus one button instead of
+  // a permanently-visible form. Evaluation itself happens server-side
+  // (src/alerts.py, from the poller); the frontend only reads
+  // `is_active`/`triggered_at` off GET /alerts and manages config.
+
+  const ALERT_TYPE_LABELS = { movement: "Moves more than", proximity: "Comes within" };
+
+  function deviceHasActiveAlert(deviceId) {
+    return state.alerts.some((alert) => {
+      if (alert.device_id !== deviceId) return false;
+      if (alert.alert_type === "proximity") return alert.is_active;
+      if (!alert.triggered_at) return false;
+      return Date.now() - new Date(alert.triggered_at).getTime() < ALERT_RECENT_MS;
+    });
+  }
+
+  function alertStatusText(alert) {
+    const triggered = alert.triggered_at ? formatRelativeTime(alert.triggered_at) : null;
+    if (alert.alert_type === "proximity") {
+      if (alert.is_active) return `Inside — triggered ${triggered}`;
+      return triggered ? `OK — last triggered ${triggered}` : "OK";
+    }
+    return triggered ? `Triggered ${triggered}` : "No alert yet";
+  }
+
+  function isAlertCurrentlyFlagged(alert) {
+    return alert.alert_type === "proximity" ? alert.is_active : deviceHasActiveAlert(alert.device_id);
+  }
+
+  // Built on the same device-row/device-text/device-name/device-subtitle
+  // classes as buildDeviceRow(), minus the checkbox and avatar button (an
+  // alert row isn't selectable or clickable), so the Alerts tab reads as the
+  // same list, not a bolted-on widget.
+  function buildAlertListRow(alert) {
+    const li = document.createElement("li");
+    li.className = "device-row alert-list-row";
+    li.style.setProperty("--row-accent", colorForDevice(alert.device_id));
+
+    const avatar = document.createElement("span");
+    avatar.className = "avatar";
+    avatar.classList.toggle("has-active-alert", isAlertCurrentlyFlagged(alert));
+    avatar.textContent = alert.device_icon || "•";
+    avatar.setAttribute("aria-hidden", "true");
+
+    const text = document.createElement("span");
+    text.className = "device-text";
+    const name = document.createElement("span");
+    name.className = "device-name";
+    name.textContent = alert.device_name;
+    const subtitle = document.createElement("span");
+    subtitle.className = "device-subtitle";
+    subtitle.classList.toggle("is-alert-active", isAlertCurrentlyFlagged(alert));
+    subtitle.textContent = `${ALERT_TYPE_LABELS[alert.alert_type]} ${Math.round(alert.threshold_m)} m · ${alertStatusText(alert)}`;
+    text.append(name, subtitle);
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "btn-ghost alert-delete-button";
+    deleteButton.dataset.action = "delete-alert";
+    deleteButton.dataset.alertId = String(alert.id);
+    deleteButton.setAttribute("aria-label", `Delete this alert for ${alert.device_name}`);
+    deleteButton.textContent = "Delete";
+
+    li.append(avatar, text, deleteButton);
+    return li;
+  }
+
+  // Built once and reused, same pattern as the icon-editor dialog: a <dialog>
+  // holding the device/type/threshold fields that used to sit permanently in
+  // the alert toolbar.
+  let alertDialog = null;
+  let alertDialogDeviceSelect = null;
+  let alertDialogTypeSelect = null;
+  let alertDialogThresholdInput = null;
+  let alertDialogThresholdUnit = null;
+  let alertDialogTrigger = null;
+
+  function updateAlertDialogThresholdUnitLabel() {
+    alertDialogThresholdUnit.textContent =
+      alertDialogTypeSelect.value === "proximity" ? "m from home" : "m between fixes";
+  }
+
+  function buildAlertDialog() {
+    const dialog = document.createElement("dialog");
+    dialog.className = "alert-dialog";
+
+    const form = document.createElement("form");
+    form.method = "dialog";
+
+    const deviceLabel = document.createElement("label");
+    deviceLabel.className = "alert-dialog-label";
+    const deviceLabelText = document.createElement("span");
+    deviceLabelText.textContent = "Device";
+    const deviceSelect = document.createElement("select");
+    deviceSelect.className = "alert-dialog-select";
+    deviceLabel.append(deviceLabelText, deviceSelect);
+
+    const typeLabel = document.createElement("label");
+    typeLabel.className = "alert-dialog-label";
+    const typeLabelText = document.createElement("span");
+    typeLabelText.textContent = "Alert type";
+    const typeSelect = document.createElement("select");
+    typeSelect.className = "alert-dialog-select";
+    for (const [value, text] of Object.entries(ALERT_TYPE_LABELS)) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      typeSelect.append(option);
+    }
+    typeLabel.append(typeLabelText, typeSelect);
+
+    const thresholdLabel = document.createElement("label");
+    thresholdLabel.className = "alert-dialog-label";
+    const thresholdLabelText = document.createElement("span");
+    thresholdLabelText.textContent = "Threshold";
+    const thresholdWrap = document.createElement("span");
+    thresholdWrap.className = "alert-threshold-wrap";
+    const thresholdInput = document.createElement("input");
+    thresholdInput.type = "number";
+    thresholdInput.min = "1";
+    thresholdInput.step = "1";
+    thresholdInput.value = "100";
+    thresholdInput.className = "alert-threshold-input";
+    const thresholdUnit = document.createElement("span");
+    thresholdUnit.className = "alert-threshold-unit";
+    thresholdWrap.append(thresholdInput, thresholdUnit);
+    thresholdLabel.append(thresholdLabelText, thresholdWrap);
+
+    const actions = document.createElement("div");
+    actions.className = "alert-dialog-actions";
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "btn-ghost";
+    cancelButton.textContent = "Cancel";
+    cancelButton.addEventListener("click", () => dialog.close());
+    const addButton = document.createElement("button");
+    addButton.type = "submit";
+    addButton.className = "btn-floating";
+    addButton.textContent = "Add";
+    actions.append(cancelButton, addButton);
+
+    form.append(deviceLabel, typeLabel, thresholdLabel, actions);
+    dialog.append(form);
+    document.body.append(dialog);
+
+    typeSelect.addEventListener("change", updateAlertDialogThresholdUnitLabel);
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const deviceId = deviceSelect.value;
+      if (!deviceId) return;
+      const thresholdM = Number(thresholdInput.value);
+      if (!Number.isFinite(thresholdM) || thresholdM <= 0) return;
+      dialog.close();
+      createAlertRequest(deviceId, typeSelect.value, thresholdM);
+    });
+
+    dialog.addEventListener("close", () => {
+      alertDialogTrigger?.focus();
+    });
+
+    alertDialogDeviceSelect = deviceSelect;
+    alertDialogTypeSelect = typeSelect;
+    alertDialogThresholdInput = thresholdInput;
+    alertDialogThresholdUnit = thresholdUnit;
+    return dialog;
+  }
+
+  function openAlertDialog(triggerElement) {
+    if (state.devices.length === 0) return;
+
+    alertDialog ??= buildAlertDialog();
+    alertDialogTrigger = triggerElement;
+
+    alertDialogDeviceSelect.textContent = "";
+    for (const device of state.devices) {
+      const option = document.createElement("option");
+      option.value = device.id;
+      option.textContent = `${device.icon || "❓"} ${device.name}`;
+      alertDialogDeviceSelect.append(option);
+    }
+
+    alertDialogTypeSelect.value = "movement";
+    alertDialogThresholdInput.value = "100";
+    updateAlertDialogThresholdUnitLabel();
+
+    alertDialog.showModal();
+    alertDialogDeviceSelect.focus();
+  }
+
+  alertAddOpenButton.addEventListener("click", () => openAlertDialog(alertAddOpenButton));
+
+  async function createAlertRequest(deviceId, alertType, thresholdM) {
+    try {
+      await fetchJson("/alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId, alert_type: alertType, threshold_m: thresholdM }),
+      });
+      await loadAlerts();
+      renderDeviceList();
+      reloadTracks();
+    } catch (error) {
+      handleFatalError(error);
+    }
+  }
+
+  async function deleteAlertRequest(alertId) {
+    try {
+      await fetchJson(`/alerts/${alertId}`, { method: "DELETE" });
+      await loadAlerts();
+      renderDeviceList();
+      reloadTracks();
+    } catch (error) {
+      handleFatalError(error);
+    }
+  }
+
+  // No local try/catch: a failed fetch here should surface through the same
+  // error banner as loadDevices()/loadTracks() failures, not get swallowed
+  // into an empty alerts list that reads as "you have no alerts configured."
+  async function loadAlerts() {
+    state.alerts = await fetchJson("/alerts");
+  }
+
   // Event delegation on shared ancestors instead of one listener per row/button.
   deviceListEl.addEventListener("change", (event) => {
     const checkbox = event.target.closest(".device-checkbox");
@@ -530,6 +781,11 @@
     const iconButton = event.target.closest('button[data-action="edit-icon"]');
     if (iconButton) {
       openIconDialog(iconButton.dataset.deviceId, iconButton);
+      return;
+    }
+    const deleteAlertButton = event.target.closest('button[data-action="delete-alert"]');
+    if (deleteAlertButton) {
+      deleteAlertRequest(Number(deleteAlertButton.dataset.alertId));
     }
   });
 
@@ -575,17 +831,15 @@
   });
 
   function refreshAll() {
-    return Promise.all([loadDevices(), loadStatus()]).then(() => loadTracks());
+    // loadAlerts() runs alongside loadDevices()/loadStatus() rather than
+    // after -- renderDeviceList() runs again once all three land so the
+    // sidebar's alert highlight isn't one refresh cycle stale, since
+    // loadDevices() alone renders before loadAlerts() may have resolved.
+    return Promise.all([loadDevices(), loadStatus(), loadAlerts()]).then(() => {
+      renderDeviceList();
+      return loadTracks();
+    });
   }
-
-  refreshButton.addEventListener("click", () => {
-    refreshAll().catch(handleFatalError);
-  });
-
-  autoRefreshToggleEl.addEventListener("click", () => {
-    state.autoRefresh = !state.autoRefresh;
-    autoRefreshToggleEl.setAttribute("aria-pressed", String(state.autoRefresh));
-  });
 
   // --- Data loading ---------------------------------------------------------
 
@@ -672,23 +926,20 @@
     .then(() => {
       setActiveTab(state.activeTab);
       updateSortIndicators();
-      return Promise.all([loadDevices(), loadStatus()]);
+      return Promise.all([loadDevices(), loadStatus(), loadAlerts()]);
     })
-    .then(() => loadTracks())
+    .then(() => {
+      renderDeviceList();
+      return loadTracks();
+    })
     .catch(handleFatalError);
 
   // The poller writes independently of anyone viewing the dashboard, so keep
   // the view honest for a page left open across several fetch cycles -- but
   // only while the tab is actually visible, so a backgrounded tab doesn't
-  // keep polling forever. With auto-refresh on, pull devices and tracks too,
-  // not just the "last updated" timestamp; toggling it off falls back to the
-  // lightweight status-only ping so the header still stays current.
+  // keep polling forever.
   setInterval(() => {
     if (document.visibilityState !== "visible") return;
-    if (state.autoRefresh) {
-      refreshAll().catch(handleFatalError);
-    } else {
-      loadStatus();
-    }
+    refreshAll().catch(handleFatalError);
   }, STATUS_POLL_MS);
 })();
