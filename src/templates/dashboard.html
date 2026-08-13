@@ -16,7 +16,7 @@
     <p id="track-empty" class="empty-state" hidden>No location history for the selected devices in this range.</p>
 
     <div class="map-toolbar">
-      <button type="button" id="history-toggle" class="btn-floating" aria-pressed="false">History</button>
+      <button type="button" id="history-toggle" class="btn-floating" aria-pressed="true">History</button>
       <label class="field">
         <span class="visually-hidden">Time range</span>
         <select id="time-range">
@@ -40,14 +40,16 @@
     </div>
 
     <aside class="sidebar" aria-label="Devices and items">
-      <button type="button" id="sheet-handle" class="sheet-handle" aria-label="Resize panel" aria-expanded="true">
-        <span class="sheet-handle-bar" aria-hidden="true"></span>
-      </button>
+      <div class="sheet-drag-zone">
+        <button type="button" id="sheet-handle" class="sheet-handle" aria-label="Resize panel" aria-expanded="true">
+          <span class="sheet-handle-bar" aria-hidden="true"></span>
+        </button>
 
-      <div class="tab-switcher" role="tablist" aria-label="Category">
-        <button type="button" class="tab-button" role="tab" id="tab-device" aria-controls="device-list" data-tab="device">Devices</button>
-        <button type="button" class="tab-button" role="tab" id="tab-item" aria-controls="device-list" data-tab="item">Items</button>
-        <button type="button" class="tab-button" role="tab" id="tab-alert" aria-controls="device-list" data-tab="alert">Alerts</button>
+        <div class="tab-switcher" role="tablist" aria-label="Category">
+          <button type="button" class="tab-button" role="tab" id="tab-device" aria-controls="device-list" data-tab="device">Devices</button>
+          <button type="button" class="tab-button" role="tab" id="tab-item" aria-controls="device-list" data-tab="item">Items</button>
+          <button type="button" class="tab-button" role="tab" id="tab-alert" aria-controls="device-list" data-tab="alert">Alerts</button>
+        </div>
       </div>
 
       <div class="sidebar-toolbar" id="device-toolbar">

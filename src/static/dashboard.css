@@ -242,6 +242,15 @@ input:focus-visible {
   overflow: hidden;
 }
 
+/* Plain passthrough on desktop -- exists so the drag listeners below have a
+   single surface spanning the handle + tabs, without changing their stacked
+   layout inside .sidebar's column flex. */
+.sheet-drag-zone {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+}
+
 .tab-switcher {
   flex: 0 0 auto;
   display: flex;
@@ -362,26 +371,6 @@ input:focus-visible {
 
 .device-row.no-fix {
   opacity: 0.45;
-}
-
-/* Custom checkbox: a plain ring that fills solid when checked, instead of the
-   native checkmark glyph -- the row's own background tint (above) is the
-   primary "this one's selected" signal, so this only needs to read as a
-   small on/off dot up close. */
-.device-checkbox {
-  flex-shrink: 0;
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  border-radius: 50%;
-  border: 1.5px solid var(--color-text-muted);
-  cursor: pointer;
-}
-
-.device-checkbox:checked {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
 }
 
 .avatar-button {
@@ -601,9 +590,9 @@ input:focus-visible {
 
 /* An alert row reuses .device-row/.device-text/.device-name/.device-subtitle
    directly (see buildAlertListRow in dashboard.js) -- only these two rules
-   are alert-specific: the delete button takes the checkbox+avatar-button's
-   place, and .device-text needs its own flex-grow since it's not wrapped in
-   the device row's .device-main button here. */
+   are alert-specific: the delete button takes the avatar-button's place,
+   and .device-text needs its own flex-grow since it's not wrapped in the
+   device row's .device-main button here. */
 .alert-list-row {
   cursor: pointer;
 }
@@ -637,6 +626,19 @@ input:focus-visible {
   display: none;
 }
 
+/* The whole zone -- handle bar and tab row -- is the drag surface, not just
+   the handle's thin pill, so grabbing the sheet doesn't need pixel-precision.
+   touch-action: none stops the browser treating a vertical drag here as a
+   page scroll/pull-to-refresh before dashboard.js's pointermove sees it. */
+.sidebar.is-sheet .sheet-drag-zone {
+  cursor: grab;
+  touch-action: none;
+}
+
+.sidebar.is-sheet .sheet-drag-zone:active {
+  cursor: grabbing;
+}
+
 .sidebar.is-sheet .sheet-handle {
   display: flex;
   flex: 0 0 auto;
@@ -647,12 +649,6 @@ input:focus-visible {
   border: none;
   padding: var(--space-2) 0 var(--space-1);
   margin: 0;
-  cursor: grab;
-  touch-action: none;
-}
-
-.sidebar.is-sheet .sheet-handle:active {
-  cursor: grabbing;
 }
 
 .sheet-handle-bar {
@@ -702,22 +698,37 @@ input:focus-visible {
     left: var(--space-2);
     right: var(--space-2);
     top: var(--space-2);
-    flex-wrap: wrap;
-    row-gap: var(--space-2);
+    flex-wrap: nowrap;
+    gap: var(--space-1);
     justify-content: flex-end;
+    /* Everything stays on one row -- shrinking below fits it on typical
+       phone widths, and this is a fallback for anything narrower rather
+       than the primary fit strategy. */
+    overflow-x: auto;
   }
 
   .map-toolbar .field {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .map-toolbar select,
+  .map-toolbar .btn-floating,
+  .last-updated {
+    font-size: 0.75rem;
+    padding: 0 var(--space-2);
   }
 
   .map-toolbar select {
-    width: 100%;
+    flex: 0 1 auto;
+    min-width: 0;
   }
 
   .last-updated {
-    order: 1;
-    flex: 1 0 auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .banner-stack {
