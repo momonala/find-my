@@ -1204,6 +1204,7 @@ dependencies = [
     { name = "flask" },
     { name = "pyicloud" },
     { name = "python-dotenv" },
+    { name = "requests" },
     { name = "schedule" },
     { name = "typer" },
 ]
@@ -1223,6 +1224,7 @@ requires-dist = [
     { name = "flask", specifier = ">=3.0.0" },
     { name = "pyicloud", specifier = ">=2.6.5" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "requests", specifier = ">=2.32.0" },
     { name = "schedule", specifier = ">=1.2.0" },
     { name = "typer", specifier = ">=0.9.0" },
 ]

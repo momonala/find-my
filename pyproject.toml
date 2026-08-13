@@ -13,6 +13,7 @@ dependencies = [
     "flask>=3.0.0",
     "pyicloud>=2.6.5",
     "schedule>=1.2.0",
+    "requests>=2.32.0",
     # Pinned exactly: src/batch_reports.py drives semi-internal APIs
     # (fetch_raw_reports, LocationReport.decrypt, update_alignment) that this
     # reverse-engineered library can change in a patch release.
@@ -94,8 +95,8 @@ explicit_package_bases = true
 mypy_path = "."
 
 [[tool.mypy.overrides]]
-# Neither ships type stubs or a py.typed marker.
-module = ["pyicloud.*", "findmy.*"]
+# None of these ship type stubs or a py.typed marker.
+module = ["pyicloud.*", "findmy.*", "requests.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

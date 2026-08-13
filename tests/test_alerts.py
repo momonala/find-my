@@ -5,6 +5,10 @@ style -- check_alerts is called from the poller with whatever moved_device_ids
 record_fetch reports, not from a request.
 """
 
+from unittest.mock import patch
+
+import requests
+
 from src.alerts import check_alerts
 from src.config import HOME_LATITUDE
 from src.config import HOME_LONGITUDE
@@ -108,3 +112,69 @@ def test_proximity_alert_deactivates_on_leaving_but_keeps_last_triggered_at(conn
     alert = alerts_for_device(conn, "tag-1")[0]
     assert alert["is_active"] == 0
     assert alert["triggered_at"] == triggered_at
+
+
+@patch("src.alerts.send_movement_alert")
+def test_movement_alert_notifies_telegram_when_it_fires(mock_send, conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+    create_alert(conn, "tag-1", "movement", 100)
+
+    result = record_fetch(conn, [make_item("tag-1", make_location(52.6, 13.4, minutes_later(1)))])
+    check_alerts(conn, result.moved_device_ids)
+
+    mock_send.assert_called_once()
+    assert mock_send.call_args.args[0]["device_id"] == "tag-1"
+
+
+@patch("src.alerts.send_movement_alert")
+def test_movement_alert_does_not_notify_when_it_does_not_fire(mock_send, conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+    create_alert(conn, "tag-1", "movement", 100)
+
+    result = record_fetch(conn, [make_item("tag-1", make_location(52.50001, 13.4, minutes_later(1)))])
+    check_alerts(conn, result.moved_device_ids)
+
+    mock_send.assert_not_called()
+
+
+@patch("src.alerts.send_movement_alert", side_effect=requests.RequestException("down"))
+def test_a_failed_telegram_send_does_not_stop_the_rest_of_the_cycle(mock_send, conn):
+    """One alert's notification failing must not prevent other alerts (or
+    other devices) from being evaluated and recorded in-app this cycle."""
+    record_fetch(
+        conn, [make_item("tag-1", make_location(52.5, 13.4)), make_item("tag-2", make_location(52.5, 13.4))]
+    )
+    create_alert(conn, "tag-1", "movement", 100)
+    create_alert(conn, "tag-2", "movement", 100)
+
+    result = record_fetch(
+        conn,
+        [
+            make_item("tag-1", make_location(52.6, 13.4, minutes_later(1))),
+            make_item("tag-2", make_location(52.6, 13.4, minutes_later(1))),
+        ],
+    )
+    check_alerts(conn, result.moved_device_ids)  # must not raise
+
+    assert alerts_for_device(conn, "tag-1")[0]["triggered_at"] is not None
+    assert alerts_for_device(conn, "tag-2")[0]["triggered_at"] is not None
+
+
+@patch("src.alerts.send_proximity_alert")
+def test_proximity_alert_notifies_telegram_on_entering_and_leaving(mock_send, conn):
+    record_fetch(conn, [make_item("tag-1", make_location(HOME_LATITUDE + 1, HOME_LONGITUDE))])
+    create_alert(conn, "tag-1", "proximity", 100)
+
+    enter = record_fetch(
+        conn, [make_item("tag-1", make_location(HOME_LATITUDE, HOME_LONGITUDE, minutes_later(1)))]
+    )
+    check_alerts(conn, enter.moved_device_ids)
+    assert mock_send.call_args.kwargs == {"entered": True}
+
+    leave = record_fetch(
+        conn, [make_item("tag-1", make_location(HOME_LATITUDE + 1, HOME_LONGITUDE, minutes_later(2)))]
+    )
+    check_alerts(conn, leave.moved_device_ids)
+    assert mock_send.call_args.kwargs == {"entered": False}
+    assert mock_send.call_count == 2
+

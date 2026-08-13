@@ -15,3 +15,9 @@ ICLOUD_PASSWORD = os.environ.get("ICLOUD_PASSWORD", "")
 # Unset leaves writes open, which is fine for the localhost default; set it
 # before exposing the dashboard on a network or through a tunnel.
 API_WRITE_TOKEN = os.environ.get("API_WRITE_TOKEN", "")
+
+# Optional Telegram bot used to push alert notifications (src/telegram.py).
+# Unset leaves alerting in-app only -- the dashboard still shows triggered
+# alerts via GET /alerts.
+TELEGRAM_API_TOKEN = os.environ.get("TELEGRAM_API_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")

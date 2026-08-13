@@ -6,20 +6,28 @@ Only devices that actually got a new `location_history` row this cycle are
 checked -- for both alert types, nothing about the movement delta or the
 distance to home changes without a new fix.
 
-Delivery is in-app only for now (the dashboard reads `is_active`/`triggered_at`
-off GET /alerts). A later Telegram integration would call out from the
-`is_active` transitions below -- proximity alerts are edge-triggered
+Delivery is in-app (the dashboard reads `is_active`/`triggered_at` off
+GET /alerts) plus an optional Telegram push from src/telegram.py, fired from
+the same `is_active` transitions below -- proximity alerts are edge-triggered
 (entering/leaving the radius) rather than re-fired every cycle, precisely so
 that hook only fires once per real event.
 """
 
+import logging
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC
 from datetime import datetime
 
+import requests
+
 import src.db as db
+from src.telegram import send_movement_alert
+from src.telegram import send_proximity_alert
 from src.tracking import distance_from_home_m_at
 from src.tracking import haversine_m
+
+logger = logging.getLogger(__name__)
 
 
 def check_alerts(conn: sqlite3.Connection, moved_device_ids: set[str]) -> None:
@@ -48,10 +56,22 @@ def check_alerts(conn: sqlite3.Connection, moved_device_ids: set[str]) -> None:
                     db.set_alert_state(
                         conn, alert["id"], is_active=bool(alert["is_active"]), triggered_at=now
                     )
+                    _notify(send_movement_alert, alert, moved_m)
             else:  # proximity
                 distance_m = distance_from_home_m_at(current["latitude"], current["longitude"])
                 inside = distance_m <= alert["threshold_m"]
                 if inside and not alert["is_active"]:
                     db.set_alert_state(conn, alert["id"], is_active=True, triggered_at=now)
+                    _notify(send_proximity_alert, alert, entered=True)
                 elif not inside and alert["is_active"]:
                     db.set_alert_state(conn, alert["id"], is_active=False, triggered_at=alert["triggered_at"])
+                    _notify(send_proximity_alert, alert, entered=False)
+
+
+def _notify(send: Callable[..., None], alert: sqlite3.Row, *args: object, **kwargs: object) -> None:
+    """Best-effort Telegram push -- a down/misconfigured bot must not stop the
+    rest of this cycle's alerts from being evaluated and recorded in-app."""
+    try:
+        send(alert, *args, **kwargs)
+    except requests.RequestException:
+        logger.warning("Telegram notification failed for alert %s", alert["id"], exc_info=True)
