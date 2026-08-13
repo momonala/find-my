@@ -26,6 +26,8 @@ PROJECT_VERSION = _project_config["version"]
 HOME_LATITUDE = _tool_config["home_latitude"]
 HOME_LONGITUDE = _tool_config["home_longitude"]
 FLASK_PORT = _tool_config["flask_port"]
+SPYGLASS_HOST = _tool_config["spyglass_host"]
+SPYGLASS_DASHBOARD_URL = _tool_config["spyglass_dashboard_url"]
 
 # The single source of truth for the CLI below: one entry per exposed key, so
 # adding a config value means editing this dict and nothing else.
@@ -35,6 +37,8 @@ _VALUES: dict[str, Any] = {
     "home_latitude": HOME_LATITUDE,
     "home_longitude": HOME_LONGITUDE,
     "flask_port": FLASK_PORT,
+    "spyglass_host": SPYGLASS_HOST,
+    "spyglass_dashboard_url": SPYGLASS_DASHBOARD_URL,
 }
 
 app = typer.Typer(add_completion=False)
@@ -51,7 +55,8 @@ def config_cli(
     """Print non-secret configuration from pyproject.toml.
 
     Pass a key as either `--home-latitude` or `home_latitude`. Available keys:
-    project_name, project_version, home_latitude, home_longitude, flask_port.
+    project_name, project_version, home_latitude, home_longitude, flask_port,
+    spyglass_host, spyglass_dashboard_url.
     """
     if show_all:
         for name, value in _VALUES.items():

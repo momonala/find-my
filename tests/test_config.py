@@ -22,7 +22,7 @@ runner = CliRunner()
 @pytest.mark.parametrize(
     "flag,expected_output",
     [
-        ("--project-name", "test-find-my"),
+        ("--project-name", "find-my"),
         ("--project-version", "0.1.0"),
         ("--home-latitude", "52.55214"),
         ("--home-longitude", "13.39984"),
@@ -45,7 +45,7 @@ def test_config_all_returns_all_values():
     result = runner.invoke(app, ["--all"])
 
     assert result.exit_code == 0
-    assert "project_name=test-find-my" in result.stdout
+    assert "project_name=find-my" in result.stdout
     assert "project_version=0.1.0" in result.stdout
     assert "flask_port=5016" in result.stdout
 
