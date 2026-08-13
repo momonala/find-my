@@ -13,7 +13,7 @@ from src.telegram import send_telegram_message
 
 
 def _alert(**overrides) -> dict:
-    base = {"id": 1, "device_name": "Steve's *Keys*", "threshold_m": 100.0}
+    base = {"id": 1, "device_name": "Steve's *Keys*", "threshold_m": 100.0, "device_icon": None}
     base.update(overrides)
     return base
 
@@ -76,6 +76,18 @@ def test_send_movement_alert_formats_name_and_distance(mock_send):
 
 
 @patch("src.telegram.send_telegram_message")
+def test_send_movement_alert_prefixes_the_devices_own_icon(mock_send):
+    send_movement_alert(_alert(device_icon="🚲"), 250.4)
+    assert mock_send.call_args.args[0].startswith("🚲 ")
+
+
+@patch("src.telegram.send_telegram_message")
+def test_send_movement_alert_falls_back_to_a_default_icon(mock_send):
+    send_movement_alert(_alert(device_icon=None), 250.4)
+    assert mock_send.call_args.args[0].startswith("📍 ")
+
+
+@patch("src.telegram.send_telegram_message")
 def test_send_proximity_alert_reports_entered(mock_send):
     send_proximity_alert(_alert(), entered=True)
     assert "entered" in mock_send.call_args.args[0]
@@ -85,3 +97,9 @@ def test_send_proximity_alert_reports_entered(mock_send):
 def test_send_proximity_alert_reports_left(mock_send):
     send_proximity_alert(_alert(), entered=False)
     assert "left" in mock_send.call_args.args[0]
+
+
+@patch("src.telegram.send_telegram_message")
+def test_send_proximity_alert_prefixes_the_devices_own_icon(mock_send):
+    send_proximity_alert(_alert(device_icon="🔑"), entered=True)
+    assert mock_send.call_args.args[0].startswith("🔑 ")

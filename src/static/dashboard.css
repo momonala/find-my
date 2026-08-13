@@ -263,6 +263,9 @@ input:focus-visible {
 
 .tab-button {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   padding: var(--space-2) var(--space-2);
@@ -276,6 +279,35 @@ input:focus-visible {
 .tab-button.is-active {
   background: var(--color-surface);
   color: var(--color-text);
+}
+
+/* Decorative -- the visible label carries the button's accessible name, so
+   the icon stays out of the accessibility tree via aria-hidden in the markup
+   rather than being hidden/shown here. */
+.tab-icon {
+  display: none;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* Collapsed to a peek, the tab row is the only thing left on screen (see the
+   sidebar[data-snap="peek"] rule below that hides everything else) -- swap
+   each label for its icon so the row reads at a glance, iOS Find My style,
+   instead of squeezing three words into a thin bar. The label is visually
+   hidden rather than removed (display:none would also drop it from the
+   accessibility tree), so the button's accessible name is unchanged whether
+   the sheet is peeking or expanded. */
+.sidebar.is-sheet[data-snap="peek"] .tab-icon {
+  display: block;
+}
+
+.sidebar.is-sheet[data-snap="peek"] .tab-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 .sidebar-toolbar {
@@ -669,6 +701,12 @@ input:focus-visible {
   display: none;
 }
 
+/* Hide sorting filters in peek and half views for a cleaner mobile UX */
+.sidebar.is-sheet[data-snap="peek"] .sort-group,
+.sidebar.is-sheet[data-snap="half"] .sort-group {
+  display: none;
+}
+
 /* --- Small screens -------------------------------------------------------
    Below this width the sidebar becomes a draggable bottom sheet (peek/half/
    full, snapped by dashboard.js) instead of an absolutely-positioned panel
@@ -715,7 +753,7 @@ input:focus-visible {
   .map-toolbar select,
   .map-toolbar .btn-floating,
   .last-updated {
-    font-size: 0.75rem;
+    font-size: 0.65rem;
     padding: 0 var(--space-2);
   }
 
@@ -727,8 +765,16 @@ input:focus-visible {
   .last-updated {
     flex: 0 1 auto;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* dashboard.js shows only the bare relative time on mobile (e.g. "2 min
+       ago"), not the "Last updated" prefix, so this rarely needs to wrap --
+       height:auto/min-height (rather than the fixed --toolbar-height) is a
+       fallback for an unusually long value, so a wrapped line grows the pill
+       instead of getting clipped by a fixed height. */
+    height: auto;
+    min-height: var(--toolbar-height);
+    white-space: normal;
+    overflow-wrap: break-word;
+    max-width: 100px;
   }
 
   .banner-stack {

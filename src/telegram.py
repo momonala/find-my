@@ -19,6 +19,10 @@ from src.telemetry import metrics
 logger = logging.getLogger(__name__)
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+# Prefix for a device with no custom marker set (src/db.py's device_icons
+# table) -- keeps every alert visually scannable in the chat, not just the
+# ones for devices someone bothered to give an emoji.
+DEFAULT_ALERT_ICON = "📍"
 
 
 def send_telegram_message(text: str) -> None:
@@ -48,10 +52,16 @@ def send_telegram_message(text: str) -> None:
     response.raise_for_status()
 
 
+def _alert_icon(alert: sqlite3.Row) -> str:
+    """The alerted device's own marker emoji (set via PUT .../icon), or a
+    generic pin if it doesn't have one."""
+    return alert["device_icon"] or DEFAULT_ALERT_ICON
+
+
 def send_movement_alert(alert: sqlite3.Row, moved_m: float) -> None:
     """Format and send a movement-alert notification."""
     send_telegram_message(
-        f"*{_escape_markdown(alert['device_name'])}* moved "
+        f"{_alert_icon(alert)} *{_escape_markdown(alert['device_name'])}* moved "
         f"{moved_m:.0f}m, over the {alert['threshold_m']:.0f}m threshold"
     )
 
@@ -60,7 +70,7 @@ def send_proximity_alert(alert: sqlite3.Row, *, entered: bool) -> None:
     """Format and send a proximity-alert notification for an enter/leave transition."""
     action = "entered" if entered else "left"
     send_telegram_message(
-        f"*{_escape_markdown(alert['device_name'])}* {action} the "
+        f"{_alert_icon(alert)} *{_escape_markdown(alert['device_name'])}* {action} the "
         f"{alert['threshold_m']:.0f}m radius around home"
     )
 
