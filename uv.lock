@@ -414,6 +414,47 @@ wheels = [
 ]
 
 [[package]]
+name = "find-my"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "findmy" },
+    { name = "flask" },
+    { name = "pyicloud" },
+    { name = "python-dotenv" },
+    { name = "schedule" },
+    { name = "typer" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "black" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "findmy", specifier = "==0.10.1" },
+    { name = "flask", specifier = ">=3.0.0" },
+    { name = "pyicloud", specifier = ">=2.6.5" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "schedule", specifier = ">=1.2.0" },
+    { name = "typer", specifier = ">=0.9.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black" },
+    { name = "mypy", specifier = ">=1.11.0" },
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-cov", specifier = ">=4.0.0" },
+    { name = "ruff", specifier = ">=0.14.10" },
+]
+
+[[package]]
 name = "findmy"
 version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1193,47 +1234,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8d/fb/9210875dd162d3977580407b1c5ce6e779e770b8197a0de76819144a9755/srp-1.0.22.tar.gz", hash = "sha256:f330d0ec7387e2ac8577487b164963155d4a031bca6e2024f1b0930eb92baa5d", size = 22472, upload-time = "2024-11-01T21:52:54.006Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/89/75/5352c3ebd26e7d119042ae8de07354435a19c77fa2b44058fa97a1416783/srp-1.0.22-py3-none-any.whl", hash = "sha256:35aa8af053285a35683eb37182dcb2e46dbd85c7075d28e139f200d6bf16ea43", size = 25347, upload-time = "2024-11-01T21:52:53.021Z" },
-]
-
-[[package]]
-name = "test-find-my"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "findmy" },
-    { name = "flask" },
-    { name = "pyicloud" },
-    { name = "python-dotenv" },
-    { name = "schedule" },
-    { name = "typer" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "black" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "findmy", specifier = "==0.10.1" },
-    { name = "flask", specifier = ">=3.0.0" },
-    { name = "pyicloud", specifier = ">=2.6.5" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "schedule", specifier = ">=1.2.0" },
-    { name = "typer", specifier = ">=0.9.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black" },
-    { name = "mypy", specifier = ">=1.11.0" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-cov", specifier = ">=4.0.0" },
-    { name = "ruff", specifier = ">=0.14.10" },
 ]
 
 [[package]]
