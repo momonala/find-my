@@ -35,6 +35,11 @@
     home: null,
     showHistory: false,
     alerts: [],
+    // Set when an alert row is clicked, so the map keeps showing that one
+    // item's full history route and alert-radius circles even though the
+    // sidebar stays on the Alerts tab. Cleared by any selection change that
+    // didn't come from an alert row.
+    alertFocusDeviceId: null,
   };
 
   let map = null;
@@ -148,6 +153,7 @@
     const badge = document.createElement("span");
     badge.className = "device-marker-badge";
     badge.classList.toggle("has-active-alert", deviceHasActiveAlert(device.id));
+    badge.classList.toggle("is-alert-focus", state.alertFocusDeviceId === device.id);
     applyBadgeColors(badge, device.id);
     badge.textContent = device.icon || monogramFor(device.name);
     return L.divIcon({ className: "device-marker", html: badge, iconSize: [28, 28], iconAnchor: [14, 14] });
@@ -236,11 +242,16 @@
     for (const [deviceId, points] of tracksByDevice) {
       if (points.length === 0) continue;
       const color = colorForDevice(deviceId);
+      const isAlertFocus = deviceId === state.alertFocusDeviceId;
       const latLngs = points.map((point) => [point.latitude, point.longitude]);
       allLatLngs.push(...latLngs);
 
       if (latLngs.length > 1) {
-        L.polyline(latLngs, { color, weight: 3, opacity: 0.85 }).addTo(trackLayerGroup);
+        L.polyline(latLngs, {
+          color,
+          weight: isAlertFocus ? 5 : 3,
+          opacity: isAlertFocus ? 1 : 0.85,
+        }).addTo(trackLayerGroup);
       }
 
       const device = deviceFor(deviceId);
@@ -269,14 +280,66 @@
       });
     }
 
-    // Only re-fit when the set of rendered devices actually changed -- doing
-    // this on every render would hijack the viewport on each poll-driven
-    // refresh, discarding wherever the user just panned or zoomed to.
-    const fitKey = [...tracksByDevice.keys()].sort().join(",");
+    const radiusCircles = renderAlertRadii();
+
+    // Only re-fit when the set of rendered devices (or the alert focus, which
+    // adds radius circles the same fit needs to cover) actually changed --
+    // doing this on every render would hijack the viewport on each
+    // poll-driven refresh, discarding wherever the user just panned or
+    // zoomed to.
+    const fitKey =
+      [...tracksByDevice.keys()].sort().join(",") +
+      (state.alertFocusDeviceId ? `|focus:${state.alertFocusDeviceId}` : "");
     if (fitKey !== lastFitDeviceIds) {
       lastFitDeviceIds = fitKey;
-      map.fitBounds(L.latLngBounds(allLatLngs), { padding: [24, 24], maxZoom: 18 });
+      const bounds = L.latLngBounds(allLatLngs);
+      for (const circle of radiusCircles) bounds.extend(circle.getBounds());
+      map.fitBounds(bounds, { padding: [24, 24], maxZoom: 18 });
     }
+  }
+
+  // Alerts configured for the item currently focused from the Alerts tab
+  // (see state.alertFocusDeviceId), drawn as one radius circle per alert:
+  // proximity alerts around home, movement alerts around the device's
+  // current location -- movement alerts aren't tied to a fixed point, so
+  // "how far it can move before triggering" is the closest visual analog.
+  // Scoped to alert-tab focus only, not general device selection, so the
+  // map doesn't sprout circles for every ordinary Devices/Items selection.
+  function renderAlertRadii() {
+    if (!state.alertFocusDeviceId) return [];
+
+    const focusDevice = deviceFor(state.alertFocusDeviceId);
+    const focusColor = colorForDevice(state.alertFocusDeviceId);
+    const circles = [];
+
+    for (const alert of state.alerts) {
+      if (alert.device_id !== state.alertFocusDeviceId) continue;
+
+      let center = null;
+      if (alert.alert_type === "proximity" && state.home) {
+        center = [state.home.latitude, state.home.longitude];
+      } else if (
+        alert.alert_type === "movement" &&
+        focusDevice &&
+        isFiniteCoordinate(focusDevice.latitude) &&
+        isFiniteCoordinate(focusDevice.longitude)
+      ) {
+        center = [focusDevice.latitude, focusDevice.longitude];
+      }
+      if (!center) continue;
+
+      circles.push(
+        L.circle(center, {
+          radius: alert.threshold_m,
+          color: focusColor,
+          weight: 2,
+          dashArray: "6 6",
+          fillOpacity: 0.06,
+        }).addTo(trackLayerGroup),
+      );
+    }
+
+    return circles;
   }
 
   // --- Device list: tabs, sorting, rows ------------------------------------
@@ -424,9 +487,10 @@
     }
   }
 
-  function isolateDevice(deviceId) {
+  function isolateDevice(deviceId, { alertFocus = false } = {}) {
     state.selected.clear();
     state.selected.add(deviceId);
+    state.alertFocusDeviceId = alertFocus ? deviceId : null;
     renderDeviceList();
     reloadTracks();
   }
@@ -769,6 +833,7 @@
     } else {
       state.selected.delete(deviceId);
     }
+    state.alertFocusDeviceId = null;
     checkbox.closest(".device-row")?.classList.toggle("is-selected", checkbox.checked);
     reloadTracks();
   });
@@ -791,10 +856,10 @@
     }
     const alertRow = event.target.closest(".alert-list-row");
     if (alertRow) {
-      const deviceId = alertRow.dataset.deviceId;
-      const device = state.devices.find((d) => String(d.id) === deviceId);
-      if (device) setActiveTab(device.source);
-      isolateDevice(deviceId);
+      // Stays on the Alerts tab (unlike the Devices/Items rows above) --
+      // the map highlights the item's full history route and alert-radius
+      // circles in place instead of jumping the sidebar away from Alerts.
+      isolateDevice(alertRow.dataset.deviceId, { alertFocus: true });
     }
   });
 
@@ -821,12 +886,14 @@
 
   selectAllButton.addEventListener("click", () => {
     visibleDevices().forEach((device) => state.selected.add(device.id));
+    state.alertFocusDeviceId = null;
     renderDeviceList();
     reloadTracks();
   });
 
   selectNoneButton.addEventListener("click", () => {
     visibleDevices().forEach((device) => state.selected.delete(device.id));
+    state.alertFocusDeviceId = null;
     renderDeviceList();
     reloadTracks();
   });
@@ -876,12 +943,16 @@
   }
 
   async function fetchHistory(deviceId, since, signal) {
+    // An item focused from the Alerts tab always shows its full history
+    // route, regardless of the History toggle -- that's the whole point of
+    // clicking an alert instead of just reading its status in the list.
+    const showHistory = state.showHistory || deviceId === state.alertFocusDeviceId;
     // With history off, ignore the time-range filter too -- the point is
     // always "wherever the device is right now", not "its latest fix within
     // the selected range" (which could be empty and show nothing).
-    const limit = state.showHistory ? HISTORY_LIMIT : 1;
+    const limit = showHistory ? HISTORY_LIMIT : 1;
     const params = new URLSearchParams({ limit: String(limit) });
-    if (since && state.showHistory) params.set("since", since);
+    if (since && showHistory) params.set("since", since);
     const points = await fetchJson(`/locations/${encodeURIComponent(deviceId)}/history?${params}`, { signal });
     if (points.length === HISTORY_LIMIT) {
       console.warn(`${deviceId}: history capped at ${HISTORY_LIMIT} points; older fixes were not fetched.`);
