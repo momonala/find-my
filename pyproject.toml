@@ -18,6 +18,7 @@ dependencies = [
     # (fetch_raw_reports, LocationReport.decrypt, update_alignment) that this
     # reverse-engineered library can change in a patch release.
     "findmy==0.10.1",
+    "spyglass",
 ]
 
 # Test and lint tooling only -- `uv sync --no-dev` on the deploy target installs
@@ -40,6 +41,8 @@ home_longitude = 13.39984
 # Port `findmy serve` binds by default, and the one install/install.sh points
 # the Cloudflare tunnel at.
 flask_port = 5016
+spyglass_host = "localhost:5013"  # where this service's own metrics/logs are shipped
+spyglass_dashboard_url = "https://spyglass.mnalavadi.org/dashboard/find-my"
 
 [build-system]
 requires = ["hatchling"]
@@ -51,7 +54,6 @@ packages = ["src"]
 [project.scripts]
 config = "src.config:main"
 findmy = "src.cli:main"
-scheduler = "src.data_backup_scheduler:main"
 
 [tool.black]
 line-length = 110
@@ -96,7 +98,7 @@ mypy_path = "."
 
 [[tool.mypy.overrides]]
 # None of these ship type stubs or a py.typed marker.
-module = ["pyicloud.*", "findmy.*", "requests.*"]
+module = ["pyicloud.*", "findmy.*", "requests.*", "spyglass.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -123,3 +125,6 @@ exclude_lines = [
 
 # No `exclude-newer`: a relative window ("1 week") makes resolution depend on the
 # day it runs, which defeats the point of committing uv.lock.
+
+[tool.uv.sources]
+spyglass = { git = "https://github.com/momonala/spyglass.git", rev = "main" }

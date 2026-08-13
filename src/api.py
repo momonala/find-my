@@ -44,6 +44,7 @@ from src.db import remove_alert
 from src.db import set_device_icon
 from src.env import API_WRITE_TOKEN
 from src.poller import start_background_poller
+from src.telemetry import logger as _telemetry_logger  # noqa: F401  (wires stdout + Spyglass logging)
 from src.tracking import distance_from_home_m_at
 
 _VALID_ALERT_TYPES = {"movement", "proximity"}

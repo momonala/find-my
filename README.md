@@ -162,6 +162,26 @@ and will just come up with an empty dashboard until that cache exists. If a sess
 logs a warning each cycle and backs off (up to 15 minutes between attempts) rather than retrying at full
 speed forever; re-run the same console command to refresh it.
 
+## Observability
+
+This service reports its own operational metrics and logs to a [Spyglass](https://github.com/momonala/spyglass)
+server (see `src/telemetry.py`), separate from the location data it tracks about *your own* devices.
+`src/telemetry.py` is imported once per process entry point (`api.py`, `poller.py`) — each import calls
+`spyglass.initialize()` exactly once, which attaches a log-shipping handler to the root logger and creates the
+shared `metrics` collector; every module in that process gets remote log shipping for free via propagation, and
+imports `metrics` from `src.telemetry` when it needs to emit a counter or timing. Don't call `initialize()` a
+second time within the same process — it isn't idempotent and would attach a duplicate log handler.
+
+Metrics emitted (stat names auto-prefixed `find-my.{function}.*`):
+
+| Stat | Where | Meaning |
+|------|-------|---------|
+| `_poll_once.duration` | `poller.py` | Full poll-cycle latency (both fetches plus the DB write) |
+| `run_forever.failure` / `consecutive_failures` | `poller.py` | Poll-cycle failure count and the live backoff streak |
+| `check_alerts.movement_triggered` | `alerts.py` | A device moved past its configured threshold |
+| `check_alerts.proximity_entered` / `proximity_exited` | `alerts.py` | A device crossed a proximity radius (edge-triggered) |
+| `_notify.telegram_failed` | `alerts.py` | An in-app alert fired but the Telegram push failed |
+
 ## Architecture
 
 Each backend exposes a fetch function returning `list[TrackedItem]`, so callers treat them interchangeably:
@@ -273,8 +293,7 @@ test-find-my/
 │   ├── static/dashboard.{css,js}
 │   ├── config.py                 # non-secret config from pyproject.toml → `config` CLI
 │   ├── env.py                    # secrets from .env
-│   ├── git_tool.py                    # commits a DB snapshot to git, used by the scheduler below
-│   └── data_backup_scheduler.py       # hourly timer → git_tool.commit_db_if_changed(), `uv run scheduler`
+│   └── telemetry.py              # Spyglass wiring: logging + metrics, see Observability
 ├── tests/
 ├── pyproject.toml            # dependencies, [tool.config], CLI entry points
 └── install/, deploy.py       # systemd units and the pi-cloud deploy CLI

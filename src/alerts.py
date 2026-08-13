@@ -24,6 +24,7 @@ import requests
 import src.db as db
 from src.telegram import send_movement_alert
 from src.telegram import send_proximity_alert
+from src.telemetry import metrics
 from src.tracking import distance_from_home_m_at
 from src.tracking import haversine_m
 
@@ -56,15 +57,18 @@ def check_alerts(conn: sqlite3.Connection, moved_device_ids: set[str]) -> None:
                     db.set_alert_state(
                         conn, alert["id"], is_active=bool(alert["is_active"]), triggered_at=now
                     )
+                    metrics.increment("movement_triggered")
                     _notify(send_movement_alert, alert, moved_m)
             else:  # proximity
                 distance_m = distance_from_home_m_at(current["latitude"], current["longitude"])
                 inside = distance_m <= alert["threshold_m"]
                 if inside and not alert["is_active"]:
                     db.set_alert_state(conn, alert["id"], is_active=True, triggered_at=now)
+                    metrics.increment("proximity_entered")
                     _notify(send_proximity_alert, alert, entered=True)
                 elif not inside and alert["is_active"]:
                     db.set_alert_state(conn, alert["id"], is_active=False, triggered_at=alert["triggered_at"])
+                    metrics.increment("proximity_exited")
                     _notify(send_proximity_alert, alert, entered=False)
 
 
@@ -74,4 +78,5 @@ def _notify(send: Callable[..., None], alert: sqlite3.Row, *args: object, **kwar
     try:
         send(alert, *args, **kwargs)
     except requests.RequestException:
+        metrics.increment("telegram_failed")
         logger.warning("Telegram notification failed for alert %s", alert["id"], exc_info=True)

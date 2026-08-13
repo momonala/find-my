@@ -18,6 +18,7 @@ from src.alerts import check_alerts
 from src.db import connection
 from src.db import record_fetch
 from src.find_my import fetch_devices
+from src.telemetry import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +30,13 @@ _PERSISTENT_FAILURE_THRESHOLD = 3
 
 
 def _poll_once() -> None:
-    items = fetch_devices() + fetch_airtags()
-    with connection() as conn:
-        result = record_fetch(conn, items)
-        # Same connection/transaction as record_fetch, so a crash between the
-        # two can't leave history written but that cycle's alerts unevaluated.
-        check_alerts(conn, result.moved_device_ids)
+    with metrics.timed("duration"):
+        items = fetch_devices() + fetch_airtags()
+        with connection() as conn:
+            result = record_fetch(conn, items)
+            # Same connection/transaction as record_fetch, so a crash between the
+            # two can't leave history written but that cycle's alerts unevaluated.
+            check_alerts(conn, result.moved_device_ids)
     items_written, items_fetched = result.counts.get("item", (0, 0))
     devices_written, devices_fetched = result.counts.get("device", (0, 0))
     logger.info(
@@ -66,10 +68,13 @@ def run_forever(stop_event: threading.Event) -> None:
         try:
             _poll_once()
             consecutive_failures = 0
+            metrics.gauge("consecutive_failures", 0)
         except Exception:
             # A network blip or expired session shouldn't kill the poller or the
             # API -- just keep serving the last-known data and try again later.
             consecutive_failures += 1
+            metrics.increment("failure")
+            metrics.gauge("consecutive_failures", consecutive_failures)
             if consecutive_failures >= _PERSISTENT_FAILURE_THRESHOLD:
                 logger.exception(
                     "Poll cycle failed %d times in a row; the session may need re-authenticating "
