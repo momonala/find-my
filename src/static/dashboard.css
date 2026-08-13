@@ -10,6 +10,8 @@
   --color-accent: #5b8def;
   --color-danger: #ff8a80;
   --color-danger-bg: rgba(42, 22, 22, 0.92);
+  --color-warning: #f5c451;
+  --color-warning-bg: rgba(43, 34, 12, 0.92);
 
   --radius: 8px;
   --radius-lg: 14px;
@@ -188,6 +190,16 @@ input:focus-visible {
   border-radius: var(--radius);
   background: var(--color-danger-bg);
   color: var(--color-danger);
+  font-size: 0.85rem;
+  box-shadow: var(--shadow-md);
+}
+
+.warning-banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
   font-size: 0.85rem;
   box-shadow: var(--shadow-md);
 }

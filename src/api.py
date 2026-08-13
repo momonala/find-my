@@ -43,6 +43,8 @@ from src.db import list_alerts
 from src.db import remove_alert
 from src.db import set_device_icon
 from src.env import API_WRITE_TOKEN
+from src.env import TELEGRAM_API_TOKEN
+from src.env import TELEGRAM_CHAT_ID
 from src.poller import start_background_poller
 from src.telemetry import logger as _telemetry_logger  # noqa: F401  (wires stdout + Spyglass logging)
 from src.tracking import distance_from_home_m_at
@@ -197,7 +199,13 @@ def create_app(start_poller: bool = True) -> Flask:
 
     @app.get("/config")
     def get_config() -> ResponseReturnValue:
-        return jsonify({"home_latitude": HOME_LATITUDE, "home_longitude": HOME_LONGITUDE})
+        return jsonify(
+            {
+                "home_latitude": HOME_LATITUDE,
+                "home_longitude": HOME_LONGITUDE,
+                "telegram_configured": bool(TELEGRAM_API_TOKEN and TELEGRAM_CHAT_ID),
+            }
+        )
 
     @app.get("/status")
     def get_status() -> ResponseReturnValue:
