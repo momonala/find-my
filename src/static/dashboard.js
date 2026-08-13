@@ -21,6 +21,9 @@
   const EARTH_RADIUS_M = 6371008.8;
   const STATUS_POLL_MS = 30_000;
   const TAB_KEYS = ["device", "item", "alert"];
+  // Which device/item is auto-selected on first load, per tab -- lets the
+  // dashboard open with a sensible default view instead of an empty map.
+  const DEFAULT_SELECTED_NAME_BY_SOURCE = { device: "Momo", item: "Ema" };
   // A movement alert is an instantaneous event, not a standing state (unlike
   // proximity, which carries `is_active`) -- this is how long its marker
   // highlight and "Triggered" status stay shown after the fact.
@@ -33,7 +36,7 @@
     sort: { key: "name", direction: "asc" },
     activeTab: "device",
     home: null,
-    showHistory: false,
+    showHistory: true,
     alerts: [],
     // Set when an alert row is clicked, so the map keeps showing that one
     // item's full history route and alert-radius circles even though the
@@ -48,6 +51,9 @@
   // The device ids actually drawn last time, so a same-selection refresh
   // doesn't re-fit the map and discard wherever the user just panned/zoomed to.
   let lastFitDeviceIds = null;
+  // Only apply the default selection once -- otherwise every poll refresh
+  // would stomp on whatever the user has since selected.
+  let didApplyDefaultSelection = false;
 
   const lastUpdatedEl = document.getElementById("last-updated");
   const deviceListEl = document.getElementById("device-list");
@@ -65,6 +71,7 @@
   const deviceToolbarEl = document.getElementById("device-toolbar");
   const sidebarEl = document.querySelector(".sidebar");
   const sheetHandleEl = document.getElementById("sheet-handle");
+  const sheetDragZoneEl = document.querySelector(".sheet-drag-zone");
   const alertEmptyEl = document.getElementById("alert-empty");
   const alertAddOpenButton = document.getElementById("alert-add-open");
 
@@ -436,13 +443,6 @@
     li.classList.toggle("no-fix", !hasFix);
     li.style.setProperty("--row-accent", colorForDevice(device.id));
 
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.className = "device-checkbox";
-    checkbox.dataset.deviceId = device.id;
-    checkbox.checked = state.selected.has(device.id);
-    checkbox.setAttribute("aria-label", `Show ${device.name} on the map`);
-
     const avatarButton = document.createElement("button");
     avatarButton.type = "button";
     avatarButton.className = "avatar-button";
@@ -462,7 +462,10 @@
     main.className = "device-main";
     main.dataset.action = "isolate";
     main.dataset.deviceId = device.id;
-    main.setAttribute("aria-label", `Show only ${device.name} on the map`);
+    main.setAttribute(
+      "aria-label",
+      `Show only ${device.name} on the map -- cmd/ctrl+click to add to the current selection instead`,
+    );
 
     const text = document.createElement("span");
     text.className = "device-text";
@@ -480,7 +483,7 @@
 
     main.append(text);
 
-    li.append(checkbox, avatarButton, main);
+    li.append(avatarButton, main);
     return li;
   }
 
@@ -646,9 +649,9 @@
   }
 
   // Built on the same device-row/device-text/device-name/device-subtitle
-  // classes as buildDeviceRow(), minus the checkbox and avatar button (an
-  // alert row isn't selectable or clickable), so the Alerts tab reads as the
-  // same list, not a bolted-on widget.
+  // classes as buildDeviceRow(), minus the avatar button (an alert row
+  // isn't selectable or clickable), so the Alerts tab reads as the same
+  // list, not a bolted-on widget.
   function buildAlertListRow(alert) {
     const li = document.createElement("li");
     li.className = "device-row alert-list-row";
@@ -843,25 +846,29 @@
     state.alerts = await fetchJson("/alerts");
   }
 
-  // Event delegation on shared ancestors instead of one listener per row/button.
-  deviceListEl.addEventListener("change", (event) => {
-    const checkbox = event.target.closest(".device-checkbox");
-    if (!checkbox) return;
-    const deviceId = checkbox.dataset.deviceId;
-    if (checkbox.checked) {
-      state.selected.add(deviceId);
-    } else {
+  // cmd+click (ctrl+click on non-Mac) adds/removes a device from the current
+  // selection instead of isolating it -- the only way to view more than one
+  // device's track at once now that there's no per-row checkbox.
+  function toggleSelected(deviceId) {
+    if (state.selected.has(deviceId)) {
       state.selected.delete(deviceId);
+    } else {
+      state.selected.add(deviceId);
     }
     state.alertFocusDeviceId = null;
-    checkbox.closest(".device-row")?.classList.toggle("is-selected", checkbox.checked);
+    renderDeviceList();
     reloadTracks();
-  });
+  }
 
+  // Event delegation on shared ancestors instead of one listener per row/button.
   deviceListEl.addEventListener("click", (event) => {
     const isolateButton = event.target.closest('button[data-action="isolate"]');
     if (isolateButton) {
-      isolateDevice(isolateButton.dataset.deviceId);
+      if (event.metaKey || event.ctrlKey) {
+        toggleSelected(isolateButton.dataset.deviceId);
+      } else {
+        isolateDevice(isolateButton.dataset.deviceId);
+      }
       return;
     }
     const iconButton = event.target.closest('button[data-action="edit-icon"]');
@@ -929,12 +936,20 @@
   // --- Mobile bottom sheet ----------------------------------------------
   //
   // Below MOBILE_QUERY the sidebar becomes a draggable bottom sheet, like the
-  // real Find My app's device list: drag the handle down to collapse it out
+  // real Find My app's device list: drag the header down to collapse it out
   // of the way and see the full map, or up to expand it. Snap heights are
   // computed in px (not left as a CSS max-height) since dragging needs a
   // concrete number to animate towards and compare the release position to.
   const MOBILE_QUERY = window.matchMedia("(max-width: 640px)");
   const SHEET_SNAPS = ["peek", "half", "full"];
+  // Below this speed (px/ms of vertical finger travel) a release is treated
+  // as a slow drag and snaps to whichever point it's physically closest to;
+  // above it, a quick flick jumps one step in the flick's direction even if
+  // it only traveled a few px -- same "decisive flick" feel as iOS sheets.
+  const SHEET_FLING_PX_PER_MS = 0.5;
+  // Ignored below this, so a stationary finger with jittery touch samples
+  // doesn't register as a tiny fling.
+  const SHEET_DRAG_SLOP_PX = 4;
   let sheetSnap = "half";
   // Set only while a drag is in progress; null the rest of the time.
   let sheetDrag = null;
@@ -969,35 +984,71 @@
     if (!sheetDrag) return;
     sidebarEl.classList.remove("is-dragging");
     if (sheetDrag.moved) {
-      const currentHeight = sidebarEl.getBoundingClientRect().height;
-      const nearest = SHEET_SNAPS.reduce((best, snap) =>
-        Math.abs(sheetHeightFor(snap) - currentHeight) < Math.abs(sheetHeightFor(best) - currentHeight) ? snap : best
-      );
-      applySheetSnap(nearest);
-    } else {
-      // A tap rather than a drag: step to the next snap point.
+      const startIndex = SHEET_SNAPS.indexOf(sheetSnap);
+      if (Math.abs(sheetDrag.velocity) > SHEET_FLING_PX_PER_MS) {
+        // Positive velocity means the finger's last movement was downward
+        // (clientY increasing), which shrinks the sheet -- so fling down
+        // steps toward "peek" (index 0) and fling up toward "full".
+        const direction = sheetDrag.velocity > 0 ? -1 : 1;
+        const nextIndex = Math.min(SHEET_SNAPS.length - 1, Math.max(0, startIndex + direction));
+        applySheetSnap(SHEET_SNAPS[nextIndex]);
+      } else {
+        const currentHeight = sidebarEl.getBoundingClientRect().height;
+        const nearest = SHEET_SNAPS.reduce((best, snap) =>
+          Math.abs(sheetHeightFor(snap) - currentHeight) < Math.abs(sheetHeightFor(best) - currentHeight) ? snap : best
+        );
+        applySheetSnap(nearest);
+      }
+    } else if (sheetDrag.isHandleTap) {
+      // A tap on the handle itself (not the tab row -- those have their own
+      // click behavior) rather than a drag: step to the next snap point.
       applySheetSnap(SHEET_SNAPS[(SHEET_SNAPS.indexOf(sheetSnap) + 1) % SHEET_SNAPS.length]);
     }
     sheetDrag = null;
   }
 
-  sheetHandleEl.addEventListener("pointerdown", (event) => {
+  sheetDragZoneEl.addEventListener("pointerdown", (event) => {
     if (!MOBILE_QUERY.matches) return;
-    sheetHandleEl.setPointerCapture(event.pointerId);
-    sidebarEl.classList.add("is-dragging");
-    sheetDrag = { startY: event.clientY, startHeight: sidebarEl.getBoundingClientRect().height, moved: false };
+    // Pointer capture isn't taken here: Chromium retargets the eventual
+    // click to the capture target too, not just pointer events, which would
+    // silently eat every tap on a tab button. It's taken only once the
+    // pointermove handler below confirms this is an actual drag.
+    sheetDrag = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: sidebarEl.getBoundingClientRect().height,
+      moved: false,
+      isHandleTap: event.target.closest("#sheet-handle") !== null,
+      lastY: event.clientY,
+      lastT: event.timeStamp,
+      velocity: 0,
+    };
   });
 
-  sheetHandleEl.addEventListener("pointermove", (event) => {
+  sheetDragZoneEl.addEventListener("pointermove", (event) => {
     if (!sheetDrag) return;
     const deltaY = event.clientY - sheetDrag.startY;
-    if (Math.abs(deltaY) > 4) sheetDrag.moved = true;
+    if (!sheetDrag.moved && Math.abs(deltaY) <= SHEET_DRAG_SLOP_PX) return;
+    if (!sheetDrag.moved) sheetDragZoneEl.setPointerCapture(sheetDrag.pointerId);
+    sheetDrag.moved = true;
+    sidebarEl.classList.add("is-dragging");
+
+    const elapsed = event.timeStamp - sheetDrag.lastT;
+    if (elapsed > 0) {
+      // Exponential smoothing over raw per-sample speed -- a single rushed or
+      // sparse sample would otherwise spike the velocity used at release.
+      const instantVelocity = (event.clientY - sheetDrag.lastY) / elapsed;
+      sheetDrag.velocity = sheetDrag.velocity * 0.7 + instantVelocity * 0.3;
+      sheetDrag.lastY = event.clientY;
+      sheetDrag.lastT = event.timeStamp;
+    }
+
     const height = Math.min(sheetHeightFor("full"), Math.max(sheetHeightFor("peek"), sheetDrag.startHeight - deltaY));
     sidebarEl.style.height = `${height}px`;
   });
 
-  sheetHandleEl.addEventListener("pointerup", endSheetDrag);
-  sheetHandleEl.addEventListener("pointercancel", endSheetDrag);
+  sheetDragZoneEl.addEventListener("pointerup", endSheetDrag);
+  sheetDragZoneEl.addEventListener("pointercancel", endSheetDrag);
 
   MOBILE_QUERY.addEventListener("change", syncMobileSheet);
   window.addEventListener("resize", () => {
@@ -1029,6 +1080,15 @@
     // shows a permanent "failed to load" banner with no way to dismiss it.
     for (const id of state.selected) {
       if (!currentIds.has(id)) state.selected.delete(id);
+    }
+
+    if (!didApplyDefaultSelection) {
+      didApplyDefaultSelection = true;
+      for (const device of devices) {
+        if (device.name === DEFAULT_SELECTED_NAME_BY_SOURCE[device.source]) {
+          state.selected.add(device.id);
+        }
+      }
     }
 
     state.devices = devices;
