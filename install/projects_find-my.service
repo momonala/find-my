@@ -1,0 +1,15 @@
+[Unit]
+Description=Find My dashboard and read-only API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/mnalavadi/findmy
+Type=simple
+ExecStart=/home/mnalavadi/.local/bin/uv run findmy serve
+User=mnalavadi
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

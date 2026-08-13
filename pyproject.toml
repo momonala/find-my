@@ -1,5 +1,5 @@
 [project]
-name = "test-find-my"
+name = "find-my"
 version = "0.1.0"
 description = "CLI for Apple Find My: locate iCloud devices and AirTags with distance from home"
 authors = [{name = "Mohit Nalavadi"}]
