@@ -569,6 +569,7 @@
   function buildAlertListRow(alert) {
     const li = document.createElement("li");
     li.className = "device-row alert-list-row";
+    li.dataset.deviceId = String(alert.device_id);
     li.style.setProperty("--row-accent", colorForDevice(alert.device_id));
 
     const avatar = document.createElement("span");
@@ -786,6 +787,14 @@
     const deleteAlertButton = event.target.closest('button[data-action="delete-alert"]');
     if (deleteAlertButton) {
       deleteAlertRequest(Number(deleteAlertButton.dataset.alertId));
+      return;
+    }
+    const alertRow = event.target.closest(".alert-list-row");
+    if (alertRow) {
+      const deviceId = alertRow.dataset.deviceId;
+      const device = state.devices.find((d) => String(d.id) === deviceId);
+      if (device) setActiveTab(device.source);
+      isolateDevice(deviceId);
     }
   });
 
