@@ -11,11 +11,6 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 </head>
 <body>
-  <header class="page-header">
-    <h1>Find My dashboard</h1>
-    <p id="last-updated" class="last-updated">Last updated —</p>
-  </header>
-
   <main class="map-shell">
     <div id="map" role="region" aria-label="Map of selected devices' locations over the chosen time range"></div>
     <p id="track-empty" class="empty-state" hidden>No location history for the selected devices in this range.</p>
@@ -33,6 +28,7 @@
         </select>
       </label>
       <button type="button" id="alert-add-open" class="btn-floating">Add alert</button>
+      <p id="last-updated" class="last-updated">Last updated —</p>
     </div>
 
     <!-- Persistent problems (map init failed) that a track refresh should not
@@ -44,6 +40,10 @@
     </div>
 
     <aside class="sidebar" aria-label="Devices and items">
+      <button type="button" id="sheet-handle" class="sheet-handle" aria-label="Resize panel" aria-expanded="true">
+        <span class="sheet-handle-bar" aria-hidden="true"></span>
+      </button>
+
       <div class="tab-switcher" role="tablist" aria-label="Category">
         <button type="button" class="tab-button" role="tab" id="tab-device" aria-controls="device-list" data-tab="device">Devices</button>
         <button type="button" class="tab-button" role="tab" id="tab-item" aria-controls="device-list" data-tab="item">Items</button>

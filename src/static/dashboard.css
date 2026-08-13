@@ -56,27 +56,6 @@ body {
   clip-path: inset(50%);
 }
 
-.page-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-5);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.page-header h1 {
-  margin: 0;
-  font-size: 1.2rem;
-  font-weight: 600;
-}
-
-.last-updated {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--color-text-muted);
-}
-
 .map-shell {
   position: relative;
   flex: 1;
@@ -169,6 +148,22 @@ input:focus-visible {
   background: var(--color-accent);
   border-color: var(--color-accent);
   color: #ffffff;
+}
+
+.last-updated {
+  margin: 0;
+  font-size: 0.85rem;
+  height: var(--toolbar-height);
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(10px);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0 var(--space-3);
+  box-shadow: var(--shadow-md);
 }
 
 /* Stacked below the toolbar via flow layout (not a hardcoded top offset that
@@ -633,10 +628,55 @@ input:focus-visible {
   background: var(--color-danger-bg);
 }
 
+/* --- Sheet drag handle ----------------------------------------------------
+   Only shown once dashboard.js adds .is-sheet to the sidebar (it does this
+   exactly when the mobile breakpoint below is active), so the breakpoint
+   lives in one place: the JS media query, not a duplicated one here. */
+
+.sheet-handle {
+  display: none;
+}
+
+.sidebar.is-sheet .sheet-handle {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: var(--space-2) 0 var(--space-1);
+  margin: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.sidebar.is-sheet .sheet-handle:active {
+  cursor: grabbing;
+}
+
+.sheet-handle-bar {
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+/* Collapsed to a peek: only the handle and the category tabs stay visible
+   (standing in for the separate People/Devices/Items/Me tab bar the real
+   Find My app keeps below its sheet -- ours lives inside the sheet, so it
+   has to stay put rather than disappear with everything else). */
+.sidebar[data-snap="peek"] .sidebar-toolbar,
+.sidebar[data-snap="peek"] .device-list,
+.sidebar[data-snap="peek"] .list-empty {
+  display: none;
+}
+
 /* --- Small screens -------------------------------------------------------
-   Below this width the sidebar becomes a bottom sheet capped at half the
-   viewport height, instead of an absolutely-positioned panel wide enough to
-   cover nearly the whole map. */
+   Below this width the sidebar becomes a draggable bottom sheet (peek/half/
+   full, snapped by dashboard.js) instead of an absolutely-positioned panel
+   wide enough to cover nearly the whole map. */
 
 @media (max-width: 640px) {
   .sidebar {
@@ -646,21 +686,38 @@ input:focus-visible {
     bottom: var(--space-2);
     width: auto;
     max-width: none;
-    max-height: 50vh;
+    height: 45vh;
+    max-height: calc(100vh - 96px);
+  }
+
+  .sidebar.is-sheet {
+    transition: height 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  .sidebar.is-sheet.is-dragging {
+    transition: none;
   }
 
   .map-toolbar {
     left: var(--space-2);
     right: var(--space-2);
     top: var(--space-2);
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    justify-content: flex-end;
   }
 
   .map-toolbar .field {
-    flex: 1;
+    flex: 1 1 auto;
   }
 
   .map-toolbar select {
     width: 100%;
+  }
+
+  .last-updated {
+    order: 1;
+    flex: 1 0 auto;
   }
 
   .banner-stack {

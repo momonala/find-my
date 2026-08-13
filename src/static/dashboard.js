@@ -63,6 +63,8 @@
   const fatalBannerEl = document.getElementById("fatal-banner");
   const warningBannerEl = document.getElementById("warning-banner");
   const deviceToolbarEl = document.getElementById("device-toolbar");
+  const sidebarEl = document.querySelector(".sidebar");
+  const sheetHandleEl = document.getElementById("sheet-handle");
   const alertEmptyEl = document.getElementById("alert-empty");
   const alertAddOpenButton = document.getElementById("alert-add-open");
 
@@ -923,6 +925,85 @@
     historyToggleEl.setAttribute("aria-pressed", String(state.showHistory));
     reloadTracks();
   });
+
+  // --- Mobile bottom sheet ----------------------------------------------
+  //
+  // Below MOBILE_QUERY the sidebar becomes a draggable bottom sheet, like the
+  // real Find My app's device list: drag the handle down to collapse it out
+  // of the way and see the full map, or up to expand it. Snap heights are
+  // computed in px (not left as a CSS max-height) since dragging needs a
+  // concrete number to animate towards and compare the release position to.
+  const MOBILE_QUERY = window.matchMedia("(max-width: 640px)");
+  const SHEET_SNAPS = ["peek", "half", "full"];
+  let sheetSnap = "half";
+  // Set only while a drag is in progress; null the rest of the time.
+  let sheetDrag = null;
+
+  function sheetHeightFor(snap) {
+    const viewport = window.innerHeight;
+    if (snap === "peek") return sheetHandleEl.offsetHeight + tabSwitcherEl.offsetHeight;
+    if (snap === "full") return Math.min(viewport * 0.85, viewport - 96);
+    return viewport * 0.45;
+  }
+
+  function applySheetSnap(snap) {
+    sheetSnap = snap;
+    sidebarEl.dataset.snap = snap;
+    sidebarEl.style.height = `${sheetHeightFor(snap)}px`;
+    sheetHandleEl.setAttribute("aria-expanded", String(snap !== "peek"));
+  }
+
+  function syncMobileSheet() {
+    sidebarEl.classList.toggle("is-sheet", MOBILE_QUERY.matches);
+    if (MOBILE_QUERY.matches) {
+      applySheetSnap(sheetSnap);
+    } else {
+      sidebarEl.classList.remove("is-dragging");
+      delete sidebarEl.dataset.snap;
+      sidebarEl.style.height = "";
+      sheetDrag = null;
+    }
+  }
+
+  function endSheetDrag() {
+    if (!sheetDrag) return;
+    sidebarEl.classList.remove("is-dragging");
+    if (sheetDrag.moved) {
+      const currentHeight = sidebarEl.getBoundingClientRect().height;
+      const nearest = SHEET_SNAPS.reduce((best, snap) =>
+        Math.abs(sheetHeightFor(snap) - currentHeight) < Math.abs(sheetHeightFor(best) - currentHeight) ? snap : best
+      );
+      applySheetSnap(nearest);
+    } else {
+      // A tap rather than a drag: step to the next snap point.
+      applySheetSnap(SHEET_SNAPS[(SHEET_SNAPS.indexOf(sheetSnap) + 1) % SHEET_SNAPS.length]);
+    }
+    sheetDrag = null;
+  }
+
+  sheetHandleEl.addEventListener("pointerdown", (event) => {
+    if (!MOBILE_QUERY.matches) return;
+    sheetHandleEl.setPointerCapture(event.pointerId);
+    sidebarEl.classList.add("is-dragging");
+    sheetDrag = { startY: event.clientY, startHeight: sidebarEl.getBoundingClientRect().height, moved: false };
+  });
+
+  sheetHandleEl.addEventListener("pointermove", (event) => {
+    if (!sheetDrag) return;
+    const deltaY = event.clientY - sheetDrag.startY;
+    if (Math.abs(deltaY) > 4) sheetDrag.moved = true;
+    const height = Math.min(sheetHeightFor("full"), Math.max(sheetHeightFor("peek"), sheetDrag.startHeight - deltaY));
+    sidebarEl.style.height = `${height}px`;
+  });
+
+  sheetHandleEl.addEventListener("pointerup", endSheetDrag);
+  sheetHandleEl.addEventListener("pointercancel", endSheetDrag);
+
+  MOBILE_QUERY.addEventListener("change", syncMobileSheet);
+  window.addEventListener("resize", () => {
+    if (MOBILE_QUERY.matches) sidebarEl.style.height = `${sheetHeightFor(sheetSnap)}px`;
+  });
+  syncMobileSheet();
 
   function refreshAll() {
     // loadAlerts() runs alongside loadDevices()/loadStatus() rather than
