@@ -1,16 +1,22 @@
 """Telegram alerting: pushes triggered alerts (src/alerts.py) to a chat.
 
 Optional -- TELEGRAM_API_TOKEN/TELEGRAM_CHAT_ID are blank by default, in which
-case sends are silently skipped and alerting stays in-app only (the dashboard
-already reads is_active/triggered_at off GET /alerts).
+case sends are skipped (logged as a warning) and alerting stays in-app only
+(the dashboard already reads is_active/triggered_at off GET /alerts, and
+surfaces the same "not configured" state -- see GET /config's
+telegram_configured field).
 """
 
+import logging
 import sqlite3
 
 import requests
 
 from src.env import TELEGRAM_API_TOKEN
 from src.env import TELEGRAM_CHAT_ID
+from src.telemetry import metrics
+
+logger = logging.getLogger(__name__)
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
@@ -18,10 +24,16 @@ TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 def send_telegram_message(text: str) -> None:
     """Send a Markdown message to the configured Telegram chat.
 
-    A no-op if Telegram isn't configured. Raises requests.RequestException if
-    the Telegram API request fails.
+    A no-op (aside from a warning log) if Telegram isn't configured. Raises
+    requests.RequestException if the Telegram API request fails.
     """
     if not TELEGRAM_API_TOKEN or not TELEGRAM_CHAT_ID:
+        metrics.increment("telegram_skipped")
+        logger.warning(
+            "Telegram not configured (TELEGRAM_API_TOKEN/TELEGRAM_CHAT_ID unset); "
+            "dropping notification: %s",
+            text,
+        )
         return
 
     payload = {

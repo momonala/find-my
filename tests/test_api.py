@@ -73,9 +73,22 @@ def test_dashboard_static_assets_are_served(client):
     assert client.get("/static/dashboard.js").status_code == 200
 
 
-def test_config_exposes_home_coordinates(client):
+def test_config_exposes_home_coordinates_and_telegram_status(client, monkeypatch):
+    monkeypatch.setattr(api, "TELEGRAM_API_TOKEN", "")
+    monkeypatch.setattr(api, "TELEGRAM_CHAT_ID", "")
     body = client.get("/config").get_json()
-    assert body == {"home_latitude": HOME_LATITUDE, "home_longitude": HOME_LONGITUDE}
+    assert body == {
+        "home_latitude": HOME_LATITUDE,
+        "home_longitude": HOME_LONGITUDE,
+        "telegram_configured": False,
+    }
+
+
+def test_config_reports_telegram_configured_when_both_set(client, monkeypatch):
+    monkeypatch.setattr(api, "TELEGRAM_API_TOKEN", "token")
+    monkeypatch.setattr(api, "TELEGRAM_CHAT_ID", "chat")
+    body = client.get("/config").get_json()
+    assert body["telegram_configured"] is True
 
 
 def test_status_is_null_before_any_fetch(client):

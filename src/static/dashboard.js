@@ -61,6 +61,7 @@
   const trackEmptyEl = document.getElementById("track-empty");
   const errorBannerEl = document.getElementById("error-banner");
   const fatalBannerEl = document.getElementById("fatal-banner");
+  const warningBannerEl = document.getElementById("warning-banner");
   const deviceToolbarEl = document.getElementById("device-toolbar");
   const alertEmptyEl = document.getElementById("alert-empty");
   const alertAddOpenButton = document.getElementById("alert-add-open");
@@ -85,6 +86,14 @@
   function showFatalError(message) {
     fatalBannerEl.textContent = message;
     fatalBannerEl.hidden = false;
+  }
+
+  // Standing (not per-refresh) notice, same lifecycle as the fatal banner --
+  // set once from /config and left up, since the condition (no Telegram
+  // token/chat id in .env) doesn't change without a service restart.
+  function showWarning(message) {
+    warningBannerEl.textContent = message;
+    warningBannerEl.hidden = false;
   }
 
   function formatRelativeTime(isoString) {
@@ -207,6 +216,9 @@
       }
       state.home = { latitude: config.home_latitude, longitude: config.home_longitude };
       center = [config.home_latitude, config.home_longitude];
+      if (!config.telegram_configured) {
+        showWarning("Telegram alerts aren't configured on the server -- triggered alerts will only show here.");
+      }
     } catch (error) {
       console.error("Failed to load /config", error);
       showFatalError("Could not load home coordinates; centering the map on (0, 0) and hiding distances.");

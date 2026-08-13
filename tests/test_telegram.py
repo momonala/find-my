@@ -39,6 +39,14 @@ def test_send_telegram_message_is_a_no_op_when_unconfigured(mock_post):
     mock_post.assert_not_called()
 
 
+@patch("src.telegram.TELEGRAM_CHAT_ID", "")
+@patch("src.telegram.TELEGRAM_API_TOKEN", "")
+def test_send_telegram_message_warns_when_unconfigured(caplog):
+    with caplog.at_level("WARNING", logger="src.telegram"):
+        send_telegram_message("*hello*")
+    assert "not configured" in caplog.text
+
+
 @patch("src.telegram.TELEGRAM_CHAT_ID", "chat-1")
 @patch("src.telegram.TELEGRAM_API_TOKEN", "token-1")
 @patch("src.telegram.requests.post")
