@@ -204,13 +204,19 @@
 
   // --- Header: last full poll cycle ---------------------------------------
 
+  function formatLastUpdatedText(isoString) {
+    const isMobile = window.matchMedia("(max-width: 640px)").matches;
+    const relativeTime = isoString ? formatRelativeTime(isoString) : "—";
+    return isMobile ? relativeTime : `Last updated ${relativeTime}`;
+  }
+
   async function loadStatus() {
     try {
       const { last_updated: lastUpdated } = await fetchJson("/status");
-      lastUpdatedEl.textContent = lastUpdated ? `Last updated ${formatRelativeTime(lastUpdated)}` : "Last updated —";
+      lastUpdatedEl.textContent = formatLastUpdatedText(lastUpdated);
     } catch (error) {
       console.error("Failed to load /status", error);
-      lastUpdatedEl.textContent = "Last updated —";
+      lastUpdatedEl.textContent = window.matchMedia("(max-width: 640px)").matches ? "—" : "Last updated —";
     }
   }
 
