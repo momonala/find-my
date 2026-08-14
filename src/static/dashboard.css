@@ -79,6 +79,12 @@ body {
   background: var(--color-bg);
 }
 
+/* CartoDB's dark basemap is deliberately low-contrast; boost it so roads and
+   labels stay legible on top of the app's own dark theme. */
+.leaflet-tile-pane {
+  filter: brightness(1.15) contrast(1.15) saturate(1.1);
+}
+
 .leaflet-bar,
 .leaflet-control-zoom a {
   background: var(--color-surface);
