@@ -231,7 +231,62 @@ def test_post_alert_creates_it(client, seed):
     assert body["threshold_m"] == 150
     assert body["is_active"] is False
     assert body["triggered_at"] is None
+    assert body["anchor_lat"] is None
+    assert body["anchor_lon"] is None
     assert len(client.get("/alerts").get_json()) == 1
+
+
+def test_post_enter_alert_defaults_to_a_home_anchor(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    response = client.post("/alerts", json={"device_id": "tag-1", "alert_type": "enter", "threshold_m": 100})
+
+    assert response.get_json()["anchor_lat"] is None
+    assert response.get_json()["anchor_lon"] is None
+
+
+def test_post_enter_alert_with_current_anchor_snapshots_the_devices_location(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    response = client.post(
+        "/alerts",
+        json={"device_id": "tag-1", "alert_type": "enter", "threshold_m": 100, "anchor": "current"},
+    )
+
+    body = response.get_json()
+    assert response.status_code == 201
+    assert body["anchor_lat"] == 52.5
+    assert body["anchor_lon"] == 13.4
+
+
+def test_post_alert_with_current_anchor_and_no_fix_yet_is_400(client, seed):
+    seed(make_item("tag-1"))  # device known, no fix yet
+
+    response = client.post(
+        "/alerts",
+        json={"device_id": "tag-1", "alert_type": "enter", "threshold_m": 100, "anchor": "current"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_post_alert_with_current_anchor_for_unknown_device_is_404(client):
+    response = client.post(
+        "/alerts",
+        json={"device_id": "does-not-exist", "alert_type": "enter", "threshold_m": 100, "anchor": "current"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_post_alert_rejects_invalid_anchor(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    response = client.post(
+        "/alerts", json={"device_id": "tag-1", "alert_type": "enter", "threshold_m": 100, "anchor": "bogus"}
+    )
+
+    assert response.status_code == 400
 
 
 def test_post_alert_for_unknown_device_is_404(client):

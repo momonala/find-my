@@ -328,7 +328,8 @@
 
   // Alerts configured for the item currently focused from the Alerts tab
   // (see state.alertFocusDeviceId), drawn as one radius circle per alert:
-  // enter/exit alerts around home, movement alerts around the device's
+  // enter/exit alerts around their own anchor point (a fixed custom point if
+  // one was set at creation, else home), movement alerts around the device's
   // current location -- movement alerts aren't tied to a fixed point, so
   // "how far it can move before triggering" is the closest visual analog.
   // Scoped to alert-tab focus only, not general device selection, so the
@@ -344,8 +345,12 @@
       if (alert.device_id !== state.alertFocusDeviceId) continue;
 
       let center = null;
-      if ((alert.alert_type === "enter" || alert.alert_type === "exit") && state.home) {
-        center = [state.home.latitude, state.home.longitude];
+      if (RADIUS_ALERT_TYPES.has(alert.alert_type)) {
+        if (isFiniteCoordinate(alert.anchor_lat) && isFiniteCoordinate(alert.anchor_lon)) {
+          center = [alert.anchor_lat, alert.anchor_lon];
+        } else if (state.home) {
+          center = [state.home.latitude, state.home.longitude];
+        }
       } else if (
         alert.alert_type === "movement" &&
         focusDevice &&
@@ -703,12 +708,17 @@
   let alertDialogTypeSelect = null;
   let alertDialogThresholdInput = null;
   let alertDialogThresholdUnit = null;
+  let alertDialogAnchorLabel = null;
+  let alertDialogAnchorSelect = null;
   let alertDialogTrigger = null;
 
-  function updateAlertDialogThresholdUnitLabel() {
-    alertDialogThresholdUnit.textContent = RADIUS_ALERT_TYPES.has(alertDialogTypeSelect.value)
-      ? "m from home"
-      : "m between fixes";
+  // Only enter/exit alerts have an anchor point -- movement alerts measure
+  // between consecutive fixes, not from a fixed point, so the field is
+  // hidden rather than shown-but-irrelevant for that type.
+  function updateAlertDialogFieldsForType() {
+    const isRadiusAlert = RADIUS_ALERT_TYPES.has(alertDialogTypeSelect.value);
+    alertDialogThresholdUnit.textContent = isRadiusAlert ? "m from anchor" : "m between fixes";
+    alertDialogAnchorLabel.hidden = !isRadiusAlert;
   }
 
   function buildAlertDialog() {
@@ -740,6 +750,23 @@
     }
     typeLabel.append(typeLabelText, typeSelect);
 
+    const anchorLabel = document.createElement("label");
+    anchorLabel.className = "alert-dialog-label";
+    const anchorLabelText = document.createElement("span");
+    anchorLabelText.textContent = "Measured from";
+    const anchorSelect = document.createElement("select");
+    anchorSelect.className = "alert-dialog-select";
+    for (const [value, text] of [
+      ["home", "Home"],
+      ["current", "Current location"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      anchorSelect.append(option);
+    }
+    anchorLabel.append(anchorLabelText, anchorSelect);
+
     const thresholdLabel = document.createElement("label");
     thresholdLabel.className = "alert-dialog-label";
     const thresholdLabelText = document.createElement("span");
@@ -770,11 +797,11 @@
     addButton.textContent = "Add";
     actions.append(cancelButton, addButton);
 
-    form.append(deviceLabel, typeLabel, thresholdLabel, actions);
+    form.append(deviceLabel, typeLabel, anchorLabel, thresholdLabel, actions);
     dialog.append(form);
     document.body.append(dialog);
 
-    typeSelect.addEventListener("change", updateAlertDialogThresholdUnitLabel);
+    typeSelect.addEventListener("change", updateAlertDialogFieldsForType);
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -783,7 +810,8 @@
       const thresholdM = Number(thresholdInput.value);
       if (!Number.isFinite(thresholdM) || thresholdM <= 0) return;
       dialog.close();
-      createAlertRequest(deviceId, typeSelect.value, thresholdM);
+      const anchor = RADIUS_ALERT_TYPES.has(typeSelect.value) ? anchorSelect.value : "home";
+      createAlertRequest(deviceId, typeSelect.value, thresholdM, anchor);
     });
 
     dialog.addEventListener("close", () => {
@@ -794,6 +822,8 @@
     alertDialogTypeSelect = typeSelect;
     alertDialogThresholdInput = thresholdInput;
     alertDialogThresholdUnit = thresholdUnit;
+    alertDialogAnchorLabel = anchorLabel;
+    alertDialogAnchorSelect = anchorSelect;
     return dialog;
   }
 
@@ -814,7 +844,8 @@
 
     alertDialogTypeSelect.value = "movement";
     alertDialogThresholdInput.value = "100";
-    updateAlertDialogThresholdUnitLabel();
+    alertDialogAnchorSelect.value = "home";
+    updateAlertDialogFieldsForType();
 
     alertDialog.showModal();
     alertDialogDeviceSelect.focus();
@@ -822,12 +853,17 @@
 
   alertAddOpenButton.addEventListener("click", () => openAlertDialog(alertAddOpenButton));
 
-  async function createAlertRequest(deviceId, alertType, thresholdM) {
+  async function createAlertRequest(deviceId, alertType, thresholdM, anchor = "home") {
     try {
       await fetchJson("/alerts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_id: deviceId, alert_type: alertType, threshold_m: thresholdM }),
+        body: JSON.stringify({
+          device_id: deviceId,
+          alert_type: alertType,
+          threshold_m: thresholdM,
+          anchor,
+        }),
       });
       await loadAlerts();
       renderDeviceList();

@@ -19,6 +19,12 @@ dependencies = [
     # reverse-engineered library can change in a patch release.
     "findmy==0.10.1",
     "spyglass",
+    # Schema migrations for data/findmy.db (see migrations/) -- run automatically
+    # by src/db.py's init_db() on every boot. sqlalchemy is Alembic's own
+    # dependency; the app itself still talks to sqlite directly (src/db.py's
+    # get_connection/connection), not through sqlalchemy.
+    "alembic>=1.13.0",
+    "sqlalchemy>=2.0.0",
 ]
 
 # Test and lint tooling only -- `uv sync --no-dev` on the deploy target installs
