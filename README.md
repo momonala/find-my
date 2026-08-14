@@ -178,8 +178,8 @@ Metrics emitted (stat names auto-prefixed `find-my.{function}.*`):
 |------|-------|---------|
 | `_poll_once.duration` | `poller.py` | Full poll-cycle latency (both fetches plus the DB write) |
 | `run_forever.failure` / `consecutive_failures` | `poller.py` | Poll-cycle failure count and the live backoff streak |
-| `check_alerts.movement_triggered` | `alerts.py` | A device moved past its configured threshold |
-| `check_alerts.proximity_entered` / `proximity_exited` | `alerts.py` | A device crossed a proximity radius (edge-triggered) |
+| `check_alerts.movement_triggered` | `alerts.py` | A device moved past its configured threshold (cooldown-gated) |
+| `check_alerts.enter_triggered` / `exit_triggered` | `alerts.py` | A device crossed into/out of a radius (edge-triggered, cooldown-gated) |
 | `_notify.telegram_failed` | `alerts.py` | An in-app alert fired but the Telegram push failed |
 
 ## Architecture

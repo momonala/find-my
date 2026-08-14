@@ -7,8 +7,9 @@ import pytest
 import requests
 
 from src.telegram import TELEGRAM_MAX_MESSAGE_LENGTH
+from src.telegram import send_enter_alert
+from src.telegram import send_exit_alert
 from src.telegram import send_movement_alert
-from src.telegram import send_proximity_alert
 from src.telegram import send_telegram_message
 
 
@@ -88,18 +89,24 @@ def test_send_movement_alert_falls_back_to_a_default_icon(mock_send):
 
 
 @patch("src.telegram.send_telegram_message")
-def test_send_proximity_alert_reports_entered(mock_send):
-    send_proximity_alert(_alert(), entered=True)
+def test_send_enter_alert_reports_entered(mock_send):
+    send_enter_alert(_alert())
     assert "entered" in mock_send.call_args.args[0]
 
 
 @patch("src.telegram.send_telegram_message")
-def test_send_proximity_alert_reports_left(mock_send):
-    send_proximity_alert(_alert(), entered=False)
+def test_send_enter_alert_prefixes_the_devices_own_icon(mock_send):
+    send_enter_alert(_alert(device_icon="🔑"))
+    assert mock_send.call_args.args[0].startswith("🔑 ")
+
+
+@patch("src.telegram.send_telegram_message")
+def test_send_exit_alert_reports_left(mock_send):
+    send_exit_alert(_alert())
     assert "left" in mock_send.call_args.args[0]
 
 
 @patch("src.telegram.send_telegram_message")
-def test_send_proximity_alert_prefixes_the_devices_own_icon(mock_send):
-    send_proximity_alert(_alert(device_icon="🔑"), entered=True)
+def test_send_exit_alert_prefixes_the_devices_own_icon(mock_send):
+    send_exit_alert(_alert(device_icon="🔑"))
     assert mock_send.call_args.args[0].startswith("🔑 ")

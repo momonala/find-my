@@ -13,6 +13,7 @@ from datetime import timedelta
 import pytest
 
 import src.db as db
+import src.telegram as telegram
 from src.api import create_app
 from src.tracking import Location
 from src.tracking import TrackedItem
@@ -44,6 +45,17 @@ def make_item(
 def minutes_later(minutes: int) -> datetime:
     """A timestamp `minutes` after NOW, for building movement sequences."""
     return NOW + timedelta(minutes=minutes)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_telegram_credentials(monkeypatch):
+    """Blank out Telegram credentials for every test, even if `.env` has real
+    ones loaded -- alert tests that don't explicitly mock the send_*_alert
+    functions must never be able to reach the real Telegram API.
+    test_telegram.py's own tests still work: their @patch decorators target
+    the same attributes and take precedence for the duration of the test."""
+    monkeypatch.setattr(telegram, "TELEGRAM_API_TOKEN", "")
+    monkeypatch.setattr(telegram, "TELEGRAM_CHAT_ID", "")
 
 
 @pytest.fixture

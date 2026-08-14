@@ -8,7 +8,7 @@ repeated identical reports from Apple's network don't grow the table --
 `device_icons` holds an optional emoji per device, set via the API rather
 than fetched from Apple (see src/api.py's PUT /locations/<id>/icon -- Apple
 doesn't expose the per-item emoji you pick in the Find My app to either
-`pyicloud` or `findmy`), and `alerts` holds user-configured movement/proximity
+`pyicloud` or `findmy`), and `alerts` holds user-configured movement/enter/exit
 alerts, evaluated by src/alerts.py from the background poller. See
 src/poller.py for what writes here and src/api.py for what reads it.
 """
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS device_icons (
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id TEXT NOT NULL REFERENCES devices(id),
-    alert_type TEXT NOT NULL CHECK(alert_type IN ('movement', 'proximity')),
+    alert_type TEXT NOT NULL CHECK(alert_type IN ('movement', 'enter', 'exit')),
     threshold_m REAL NOT NULL,
     created_at TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 0,

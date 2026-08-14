@@ -4,7 +4,7 @@ Most routes only read `src.db` -- no request ever waits on a live Apple
 fetch, which is the whole point of polling in the background instead of
 fetching on demand. The exceptions are `PUT /locations/<id>/icon`, which
 stores a user-chosen marker emoji, and `POST /alerts` / `DELETE
-/alerts/<id>`, which manage user-configured movement/proximity alerts
+/alerts/<id>`, which manage user-configured movement/enter/exit alerts
 (evaluated by src/alerts.py from the poller, not from a request). See
 src/poller.py for how the data gets there and `uv run findmy serve --help`
 for how to run this.
@@ -49,7 +49,7 @@ from src.poller import start_background_poller
 from src.telemetry import logger as _telemetry_logger  # noqa: F401  (wires stdout + Spyglass logging)
 from src.tracking import distance_from_home_m_at
 
-_VALID_ALERT_TYPES = {"movement", "proximity"}
+_VALID_ALERT_TYPES = {"movement", "enter", "exit"}
 
 # Sensible fallback emoji for common Apple device kinds (src/find_my.py's
 # `device.device_type` values), used until a user sets their own via
