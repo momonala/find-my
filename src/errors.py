@@ -33,3 +33,13 @@ class InteractiveAuthRequiredError(FindMyError):
 
 class TwoFactorRejectedError(FindMyError):
     """The submitted 2FA code wasn't accepted."""
+
+
+class UnsupportedPlatformError(FindMyError):
+    """The operation requires macOS 14+.
+
+    AirTag key refresh reads the macOS Keychain and Find My library paths that
+    don't exist on Linux or older macOS. Initial Anisette session setup also
+    requires downloading Apple-native binaries that only work on macOS 14+.
+    Pre-seed .icloud_session/ from a Mac and copy trackers.json here instead.
+    """

@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import os
+import platform
 import re
 import sys
 from datetime import UTC
@@ -34,6 +35,7 @@ from findmy.plist import list_accessories
 from src.batch_reports import locate_accessories
 from src.errors import InteractiveAuthRequiredError
 from src.errors import TwoFactorRejectedError
+from src.errors import UnsupportedPlatformError
 from src.tracking import SESSION_DIR
 from src.tracking import Location
 from src.tracking import TrackedItem
@@ -52,6 +54,21 @@ _TRACKERS_FILE = SESSION_DIR / "trackers.json"
 # key store too, but src/find_my.py already covers them — and skipping them here
 # avoids a slow historical rolling-key scan for hardware that rarely reports.
 _APPLE_DEVICE_MODEL = re.compile(r"^[A-Za-z]+\d+,\d+$")
+
+_UNSUPPORTED_PLATFORM_MSG = (
+    "This operation requires macOS 14+. "
+    "Run it on the Mac first, then copy .icloud_session/ and trackers.json here."
+)
+
+
+def is_macos_14_plus() -> bool:
+    if sys.platform != "darwin":
+        return False
+    try:
+        major = int(platform.mac_ver()[0].split(".")[0])
+    except (ValueError, IndexError):
+        return False
+    return major >= 14
 
 
 def _is_tracker(accessory: FindMyAccessory) -> bool:
@@ -87,9 +104,14 @@ def load_trackers(refresh_keys: bool = False) -> list[FindMyAccessory]:
 
     A tracker's keys are fixed when it is paired, so re-reading them every run
     only costs a Keychain prompt. Pass `refresh_keys` after pairing a new one.
+    Reading from the cache is supported on any platform; refreshing from the
+    Keychain requires macOS 14+.
     """
     if _TRACKERS_FILE.exists() and not refresh_keys:
         return [FindMyAccessory.from_json(entry) for entry in json.loads(_TRACKERS_FILE.read_text())]
+
+    if not is_macos_14_plus():
+        raise UnsupportedPlatformError(_UNSUPPORTED_PLATFORM_MSG)
 
     trackers = [a for a in list_accessories() if _is_tracker(a)]
     _save_trackers(trackers)
@@ -102,14 +124,19 @@ def _ensure_session() -> None:
     A cached session is checked before credentials are, so a host with a warm
     `.icloud_session/` keeps working without a `.env` -- which is exactly the
     deployed case, since `.env` is git-ignored and never copied to the remote.
+    Initial login (no cached session) requires macOS 14+; on Linux the session
+    must be seeded from a Mac.
 
     Raises:
         MissingCredentialsError, InteractiveAuthRequiredError,
-        TwoFactorRejectedError.
+        TwoFactorRejectedError, UnsupportedPlatformError.
     """
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     if _ACCOUNT_FILE.exists():
         return
+
+    if not is_macos_14_plus():
+        raise UnsupportedPlatformError(_UNSUPPORTED_PLATFORM_MSG)
 
     username, password = require_credentials()
     account = AppleAccount(LocalAnisetteProvider(libs_path=_ANISETTE_LIBS))
@@ -156,7 +183,13 @@ async def _locate(
 
 
 def fetch_airtags(refresh_keys: bool = False) -> list[TrackedItem]:
-    """Return the trackers paired to this Mac with their last known location."""
+    """Return the trackers paired to this Mac with their last known location.
+
+    On non-macOS-14+ hosts with no cached session or tracker keys this returns
+    an empty list rather than failing -- both must be seeded from a Mac first.
+    """
+    if not is_macos_14_plus() and (not _ACCOUNT_FILE.exists() or not _TRACKERS_FILE.exists()):
+        return []
     _ensure_session()
     accessories = load_trackers(refresh_keys)
     if not accessories:

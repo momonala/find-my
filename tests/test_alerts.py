@@ -177,4 +177,3 @@ def test_proximity_alert_notifies_telegram_on_entering_and_leaving(mock_send, co
     check_alerts(conn, leave.moved_device_ids)
     assert mock_send.call_args.kwargs == {"entered": False}
     assert mock_send.call_count == 2
-

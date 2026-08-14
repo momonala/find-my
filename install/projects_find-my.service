@@ -5,11 +5,9 @@ Wants=network-online.target
 
 [Service]
 WorkingDirectory=/home/mnalavadi/find-my
-Type=simple
+Type=idle
 ExecStart=/home/mnalavadi/.local/bin/uv run findmy serve
 User=mnalavadi
-Restart=on-failure
-RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
