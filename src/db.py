@@ -11,6 +11,12 @@ doesn't expose the per-item emoji you pick in the Find My app to either
 `pyicloud` or `findmy`), and `alerts` holds user-configured movement/enter/exit
 alerts, evaluated by src/alerts.py from the background poller. See
 src/poller.py for what writes here and src/api.py for what reads it.
+
+Schema itself is owned by Alembic (see migrations/) -- init_db() below runs
+`alembic upgrade head` rather than issuing DDL directly. Everything else in
+this module still talks to sqlite the plain way, through get_connection/
+connection; Alembic is only ever invoked for schema changes, never for reads
+or writes of actual data.
 """
 
 import sqlite3
@@ -22,49 +28,21 @@ from pathlib import Path
 from typing import NamedTuple
 from typing import cast
 
+from alembic import command
+from alembic.config import Config
+
 from src.tracking import TrackedItem
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = _REPO_ROOT / "data"
 DB_PATH = DATA_DIR / "findmy.db"
+_ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
+_MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 # A write from the API (PUT /icon) can land while the poller is mid-write. Wait
 # for the lock instead of failing the request with "database is locked".
 _BUSY_TIMEOUT_MS = 5000
 
-_CREATE_TABLES = """
-CREATE TABLE IF NOT EXISTS devices (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'item',
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS location_history (
-    device_id TEXT NOT NULL REFERENCES devices(id),
-    latitude REAL NOT NULL,
-    longitude REAL NOT NULL,
-    seen_at TEXT NOT NULL,
-    recorded_at TEXT NOT NULL,
-    PRIMARY KEY (device_id, seen_at)
-);
-CREATE INDEX IF NOT EXISTS idx_location_history_device
-    ON location_history (device_id, seen_at DESC);
-CREATE TABLE IF NOT EXISTS device_icons (
-    device_id TEXT PRIMARY KEY REFERENCES devices(id),
-    emoji TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS alerts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT NOT NULL REFERENCES devices(id),
-    alert_type TEXT NOT NULL CHECK(alert_type IN ('movement', 'enter', 'exit')),
-    threshold_m REAL NOT NULL,
-    created_at TEXT NOT NULL,
-    is_active INTEGER NOT NULL DEFAULT 0,
-    triggered_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts (device_id);
-"""
 # No ON DELETE CASCADE on alerts.device_id, and this connection never sets
 # PRAGMA foreign_keys=ON -- both fine today since no route deletes a device
 # row, but worth knowing if one ever gets added.
@@ -115,10 +93,22 @@ def connection(path: Path | None = None) -> Iterator[sqlite3.Connection]:
 
 
 def init_db(path: Path | None = None) -> None:
-    """Create the schema if it doesn't exist yet."""
-    with connection(path) as conn:
-        conn.executescript(_CREATE_TABLES)
-        conn.commit()
+    """Bring the schema up to date, creating the database file if needed.
+
+    Runs on every `findmy serve`/poller boot (see src/api.py, src/cli.py), so
+    it has to be safe to re-run against a database that's already at head --
+    which `alembic upgrade head` already guarantees (a no-op once nothing's
+    pending). Uses its own SQLAlchemy-driven connection, entirely separate
+    from get_connection/connection's raw sqlite3 one -- Alembic never touches
+    application data, only schema.
+    """
+    effective_path = path or DB_PATH
+    effective_path.parent.mkdir(parents=True, exist_ok=True)
+
+    config = Config(str(_ALEMBIC_INI))
+    config.set_main_option("script_location", str(_MIGRATIONS_DIR))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{effective_path}")
+    command.upgrade(config, "head")
 
 
 class FetchResult(NamedTuple):
@@ -273,23 +263,41 @@ def history_for(
 # display without a second query. Callers append their own WHERE/ORDER BY.
 _ALERT_WITH_DEVICE = """
 SELECT a.id, a.device_id, d.name AS device_name, di.emoji AS device_icon,
-       a.alert_type, a.threshold_m, a.created_at, a.is_active, a.triggered_at
+       a.alert_type, a.threshold_m, a.created_at, a.is_active, a.triggered_at,
+       a.anchor_lat, a.anchor_lon
 FROM alerts a
 JOIN devices d ON d.id = a.device_id
 LEFT JOIN device_icons di ON di.device_id = a.device_id
 """
 
 
-def create_alert(conn: sqlite3.Connection, device_id: str, alert_type: str, threshold_m: float) -> int | None:
-    """Create an alert for `device_id`, returning its id, or None if unknown."""
+def create_alert(
+    conn: sqlite3.Connection,
+    device_id: str,
+    alert_type: str,
+    threshold_m: float,
+    *,
+    anchor_lat: float | None = None,
+    anchor_lon: float | None = None,
+) -> int | None:
+    """Create an alert for `device_id`, returning its id, or None if unknown.
+
+    `anchor_lat`/`anchor_lon` only matter for `enter`/`exit` alerts: NULL (the
+    default) means "measured from home", a value means "measured from this
+    fixed point" (see src/api.py's `anchor: 'current'`, which snapshots the
+    device's location at creation time rather than tracking it live).
+    """
     if not device_exists(conn, device_id):
         return None
 
     now = datetime.now(UTC).isoformat()
     with conn:
         cursor = conn.execute(
-            "INSERT INTO alerts (device_id, alert_type, threshold_m, created_at) VALUES (?, ?, ?, ?)",
-            (device_id, alert_type, threshold_m, now),
+            """
+            INSERT INTO alerts (device_id, alert_type, threshold_m, created_at, anchor_lat, anchor_lon)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (device_id, alert_type, threshold_m, now, anchor_lat, anchor_lon),
         )
     return cast("int", cursor.lastrowid)
 

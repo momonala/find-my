@@ -129,11 +129,22 @@ def _serialize_alert(row: sqlite3.Row) -> dict[str, Any]:
         "created_at": row["created_at"],
         "is_active": bool(row["is_active"]),
         "triggered_at": row["triggered_at"],
+        "anchor_lat": row["anchor_lat"],
+        "anchor_lon": row["anchor_lon"],
     }
 
 
-def _parse_alert_payload() -> tuple[str, str, float]:
-    """Return (device_id, alert_type, threshold_m) from the request body, aborting 400 on junk."""
+_VALID_ANCHORS = {"home", "current"}
+
+
+def _parse_alert_payload() -> tuple[str, str, float, str]:
+    """Return (device_id, alert_type, threshold_m, anchor) from the request body, aborting 400 on junk.
+
+    `anchor` is only meaningful for `enter`/`exit` alerts -- `"home"` (the
+    default) measures from the configured home coordinates, `"current"` tells
+    the caller (post_alert) to snapshot the device's current location as a
+    fixed anchor point instead. Ignored for `movement` alerts.
+    """
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         abort(
@@ -154,7 +165,11 @@ def _parse_alert_payload() -> tuple[str, str, float]:
     if not math.isfinite(threshold_m) or threshold_m <= 0:
         abort(400, description="'threshold_m' must be a finite number greater than 0.")
 
-    return device_id, alert_type, float(threshold_m)
+    anchor = payload.get("anchor", "home")
+    if anchor not in _VALID_ANCHORS:
+        abort(400, description=f"'anchor' must be one of: {', '.join(sorted(_VALID_ANCHORS))}.")
+
+    return device_id, alert_type, float(threshold_m), anchor
 
 
 def _require_write_token() -> None:
@@ -261,9 +276,20 @@ def create_app(start_poller: bool = True) -> Flask:
     @app.post("/alerts")
     def post_alert() -> ResponseReturnValue:
         _require_write_token()
-        device_id, alert_type, threshold_m = _parse_alert_payload()
+        device_id, alert_type, threshold_m, anchor = _parse_alert_payload()
+        anchor_lat = anchor_lon = None
         with connection() as conn:
-            alert_id = create_alert(conn, device_id, alert_type, threshold_m)
+            if anchor == "current":
+                location = latest_location_for(conn, device_id)
+                if location is not None and location["latitude"] is not None:
+                    anchor_lat, anchor_lon = location["latitude"], location["longitude"]
+                elif location is not None:
+                    abort(400, description="Cannot anchor to current location: device has no fix yet.")
+                # else: unknown device_id -- create_alert below 404s.
+
+            alert_id = create_alert(
+                conn, device_id, alert_type, threshold_m, anchor_lat=anchor_lat, anchor_lon=anchor_lon
+            )
             if alert_id is None:
                 abort(404, description=f"Unknown device_id: {device_id!r}.")
             row = get_alert(conn, alert_id)

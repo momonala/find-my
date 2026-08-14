@@ -122,8 +122,20 @@ def test_create_alert_is_reflected_in_list_and_device_lookups(conn):
     assert row["threshold_m"] == 150
     assert row["is_active"] == 0
     assert row["triggered_at"] is None
+    assert row["anchor_lat"] is None
+    assert row["anchor_lon"] is None
     assert [row["id"] for row in list_alerts(conn)] == [alert_id]
     assert [row["id"] for row in alerts_for_device(conn, "tag-1")] == [alert_id]
+
+
+def test_create_alert_stores_a_custom_anchor(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+
+    alert_id = create_alert(conn, "tag-1", "enter", 100, anchor_lat=52.5, anchor_lon=13.4)
+
+    row = get_alert(conn, alert_id)
+    assert row["anchor_lat"] == 52.5
+    assert row["anchor_lon"] == 13.4
 
 
 def test_alerts_for_device_is_empty_for_a_device_with_no_alerts(conn):
@@ -171,3 +183,19 @@ def test_init_db_is_idempotent(conn, tmp_path):
     init_db(tmp_path / "findmy.db")
 
     assert latest_location_for(conn, "tag-1")["latitude"] == 52.5
+
+
+def test_init_db_runs_alembic_migrations_to_head(tmp_path):
+    """init_db() drives schema via `alembic upgrade head` (see migrations/),
+    not raw DDL -- a fresh database should end up fully migrated, including
+    the alerts.anchor_lat/anchor_lon columns added after the baseline."""
+    from src.db import get_connection
+    from src.db import init_db
+
+    db_path = tmp_path / "findmy.db"
+    init_db(db_path)
+
+    conn = get_connection(db_path)
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == "0002"
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
+    assert {"anchor_lat", "anchor_lon"} <= columns

@@ -122,6 +122,26 @@ def test_enter_alert_activates_on_entering_the_radius(conn):
     assert alert["triggered_at"] is not None
 
 
+def test_enter_alert_measures_from_a_custom_anchor_not_home(conn):
+    anchor_lat, anchor_lon = HOME_LATITUDE + 2, HOME_LONGITUDE
+    record_fetch(conn, [make_item("tag-1", make_location(HOME_LATITUDE, HOME_LONGITUDE))])
+    create_alert(conn, "tag-1", "enter", 100, anchor_lat=anchor_lat, anchor_lon=anchor_lon)
+
+    # Moves closer to home -- irrelevant, since this alert isn't anchored there.
+    near_home = record_fetch(
+        conn, [make_item("tag-1", make_location(HOME_LATITUDE + 0.001, HOME_LONGITUDE, minutes_later(1)))]
+    )
+    check_alerts(conn, near_home.moved_device_ids)
+    assert alerts_for_device(conn, "tag-1")[0]["is_active"] == 0
+
+    # Moves to within the anchor's own radius.
+    at_anchor = record_fetch(
+        conn, [make_item("tag-1", make_location(anchor_lat, anchor_lon, minutes_later(2)))]
+    )
+    check_alerts(conn, at_anchor.moved_device_ids)
+    assert alerts_for_device(conn, "tag-1")[0]["is_active"] == 1
+
+
 def test_enter_alert_does_not_activate_outside_the_radius(conn):
     record_fetch(conn, [make_item("tag-1", make_location(HOME_LATITUDE + 1, HOME_LONGITUDE))])
     create_alert(conn, "tag-1", "enter", 100)

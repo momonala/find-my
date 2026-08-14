@@ -116,9 +116,13 @@ Deployments running more than one web worker should pass `--no-poll` and run the
 process — `uv run findmy poll` — so exactly one process ever writes to the database; `install/` ships it as a
 separate systemd unit for that reason.
 
-`src/db.py` keeps three tables: `devices` (latest name/kind per device), `location_history` (one row per fix —
+`src/db.py` keeps four tables: `devices` (latest name/kind per device), `location_history` (one row per fix —
 only written when coordinates actually change from the last stored fix, so repeated identical reports from
-Apple's network don't grow the table), and `device_icons` (the marker emoji set via the dashboard).
+Apple's network don't grow the table), `device_icons` (the marker emoji set via the dashboard), and `alerts`
+(user-configured movement/enter/exit alerts, evaluated by `src/alerts.py` from the poller — `enter`/`exit`
+alerts measure from home by default, or from a fixed point snapshotted at creation time if the dashboard's
+"Measured from: Current location" option was used). Schema itself is owned by
+[Alembic](#schema-migrations), not `db.py` directly.
 
 | Route | Returns |
 |-------|---------|
@@ -161,6 +165,19 @@ Because the poller reuses whatever's cached in `.icloud_session/`, first run `uv
 and will just come up with an empty dashboard until that cache exists. If a session expires later, the poller
 logs a warning each cycle and backs off (up to 15 minutes between attempts) rather than retrying at full
 speed forever; re-run the same console command to refresh it.
+
+### Schema migrations
+
+Schema changes go through [Alembic](https://alembic.sqlalchemy.org/) (`migrations/`), not hand-edited DDL in
+`src/db.py`. `init_db()` runs `alembic upgrade head` on every `findmy serve`/`findmy poll` boot, so a normal
+code deploy (`deploy.py code pull` + service restart) picks up new migrations automatically — there's no
+separate migration step to remember. Applying an already-current schema is a no-op, so this is safe to run on
+every boot, including a crash-loop restart.
+
+To add a schema change: `uv run alembic revision -m "add whatever column"`, then hand-write the `upgrade()` (and,
+where practical, `downgrade()`) using `op.execute("...")` with raw SQL — there are no SQLAlchemy ORM models in
+this project, so `--autogenerate` has nothing to diff against. `uv run alembic upgrade head` applies it against
+`data/findmy.db` directly if you want to check it without booting the app.
 
 ## Observability
 
@@ -287,7 +304,8 @@ test-find-my/
 │   ├── tracking.py               # shared model, distance, sorting, table renderer
 │   ├── errors.py                 # domain exceptions raised by the fetch layer
 │   ├── poller.py                 # background fetch loop for `findmy serve`/`findmy poll`
-│   ├── db.py                     # SQLite schema and queries backing the API
+│   ├── db.py                     # SQLite queries backing the API; schema lives in migrations/
+│   ├── alerts.py                 # movement/enter/exit alert evaluation, called from poller.py
 │   ├── api.py                    # Flask app: JSON routes + /dashboard
 │   ├── templates/dashboard.html
 │   ├── static/dashboard.{css,js}
@@ -295,6 +313,8 @@ test-find-my/
 │   ├── env.py                    # secrets from .env
 │   └── telemetry.py              # Spyglass wiring: logging + metrics, see Observability
 ├── tests/
+├── migrations/               # Alembic schema migrations for data/findmy.db, see Schema migrations
+├── alembic.ini
 ├── pyproject.toml            # dependencies, [tool.config], CLI entry points
 └── install/, deploy.py       # systemd units and the pi-cloud deploy CLI
 ```

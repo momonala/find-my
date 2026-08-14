@@ -8,8 +8,12 @@ distance to home changes without a new fix.
 
 Three alert types:
 - `movement`: fires when consecutive fixes are more than `threshold_m` apart.
-- `enter`: fires when the device crosses into `threshold_m` of home.
-- `exit`: fires when the device crosses out of `threshold_m` of home.
+- `enter`: fires when the device crosses into `threshold_m` of its anchor point.
+- `exit`: fires when the device crosses out of `threshold_m` of its anchor point.
+
+An alert's anchor point is `(anchor_lat, anchor_lon)` if set, else the
+configured home coordinates -- see src/api.py's `anchor: "home" | "current"`
+on alert creation.
 
 `enter`/`exit` are edge-triggered off `is_active`, which always means "is the
 device currently inside this alert's radius" -- both alert types track it so
@@ -39,11 +43,12 @@ from datetime import datetime
 import requests
 
 import src.db as db
+from src.config import HOME_LATITUDE
+from src.config import HOME_LONGITUDE
 from src.telegram import send_enter_alert
 from src.telegram import send_exit_alert
 from src.telegram import send_movement_alert
 from src.telemetry import metrics
-from src.tracking import distance_from_home_m_at
 from src.tracking import haversine_m
 
 logger = logging.getLogger(__name__)
@@ -95,7 +100,9 @@ def _check_radius_crossing(
     conn: sqlite3.Connection, alert: sqlite3.Row, current: sqlite3.Row, now: str
 ) -> None:
     is_enter = alert["alert_type"] == "enter"
-    distance_m = distance_from_home_m_at(current["latitude"], current["longitude"])
+    anchor_lat = alert["anchor_lat"] if alert["anchor_lat"] is not None else HOME_LATITUDE
+    anchor_lon = alert["anchor_lon"] if alert["anchor_lon"] is not None else HOME_LONGITUDE
+    distance_m = haversine_m(anchor_lat, anchor_lon, current["latitude"], current["longitude"])
     inside = distance_m <= alert["threshold_m"]
     was_inside = bool(alert["is_active"])
 
