@@ -13,6 +13,7 @@ import typer
 
 from src.airtags import fetch_airtags
 from src.airtags import has_cached_keys
+from src.airtags import is_macos_14_plus
 from src.airtags import load_trackers
 from src.config import FLASK_PORT
 from src.errors import FindMyError
@@ -60,6 +61,7 @@ def airtags_command(
     refresh_keys: bool = _RefreshOption,
 ) -> None:
     """Locate AirTags and other Find My network trackers paired to this Mac."""
+    _require_macos_for_keychain(refresh_keys)
     _warn_if_keychain_needed(refresh_keys)
     _report(lambda: fetch_airtags(refresh_keys), title="AirTags", sort=sort, as_json=as_json)
 
@@ -71,6 +73,7 @@ def all_command(
     refresh_keys: bool = _RefreshOption,
 ) -> None:
     """Locate everything: devices and trackers in one table."""
+    _require_macos_for_keychain(refresh_keys)
     _warn_if_keychain_needed(refresh_keys)
     _report(
         lambda: fetch_devices() + fetch_airtags(refresh_keys),
@@ -125,6 +128,7 @@ def poll_command() -> None:
 @app.command("refresh-keys")
 def refresh_keys_command() -> None:
     """Re-read tracker keys from the Keychain without locating anything."""
+    _require_macos_for_keychain(refresh_keys=True)
     _warn_if_keychain_needed(refresh_keys=True)
     trackers = load_trackers(refresh_keys=True)
     typer.secho(f"Cached keys for {len(trackers)} trackers.", fg=typer.colors.GREEN)
@@ -147,6 +151,18 @@ def _configure_server_logging() -> None:
     # duplicating src.poller's single per-cycle summary; only its
     # warnings/errors matter here.
     logging.getLogger("pyicloud").setLevel(logging.WARNING)
+
+
+def _require_macos_for_keychain(refresh_keys: bool) -> None:
+    """Exit with a clear error if a Keychain operation is requested on a non-Mac."""
+    if (refresh_keys or not has_cached_keys()) and not is_macos_14_plus():
+        typer.secho(
+            "Tracker key operations require macOS 14+. "
+            "Run this command on the Mac, then copy .icloud_session/ and trackers.json here.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
 
 
 def _warn_if_keychain_needed(refresh_keys: bool) -> None:
