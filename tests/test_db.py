@@ -134,7 +134,7 @@ def test_alerts_for_device_is_empty_for_a_device_with_no_alerts(conn):
 
 def test_remove_alert_deletes_it(conn):
     record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
-    alert_id = create_alert(conn, "tag-1", "proximity", 100)
+    alert_id = create_alert(conn, "tag-1", "enter", 100)
 
     assert remove_alert(conn, alert_id) is True
     assert get_alert(conn, alert_id) is None
@@ -146,7 +146,7 @@ def test_remove_unknown_alert_returns_false(conn):
 
 def test_set_alert_state_updates_is_active_and_triggered_at(conn):
     record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
-    alert_id = create_alert(conn, "tag-1", "proximity", 100)
+    alert_id = create_alert(conn, "tag-1", "exit", 100)
 
     set_alert_state(conn, alert_id, is_active=True, triggered_at="2026-01-01T00:00:00+00:00")
 

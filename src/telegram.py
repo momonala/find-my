@@ -66,11 +66,18 @@ def send_movement_alert(alert: sqlite3.Row, moved_m: float) -> None:
     )
 
 
-def send_proximity_alert(alert: sqlite3.Row, *, entered: bool) -> None:
-    """Format and send a proximity-alert notification for an enter/leave transition."""
-    action = "entered" if entered else "left"
+def send_enter_alert(alert: sqlite3.Row) -> None:
+    """Format and send an enter-radius-alert notification."""
     send_telegram_message(
-        f"{_alert_icon(alert)} *{_escape_markdown(alert['device_name'])}* {action} the "
+        f"{_alert_icon(alert)} *{_escape_markdown(alert['device_name'])}* entered the "
+        f"{alert['threshold_m']:.0f}m radius around home"
+    )
+
+
+def send_exit_alert(alert: sqlite3.Row) -> None:
+    """Format and send a leave-radius-alert notification."""
+    send_telegram_message(
+        f"{_alert_icon(alert)} *{_escape_markdown(alert['device_name'])}* left the "
         f"{alert['threshold_m']:.0f}m radius around home"
     )
 

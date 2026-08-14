@@ -25,7 +25,7 @@
   // dashboard open with a sensible default view instead of an empty map.
   const DEFAULT_SELECTED_NAME_BY_SOURCE = { device: "Momo", item: "Ema" };
   // A movement alert is an instantaneous event, not a standing state (unlike
-  // proximity, which carries `is_active`) -- this is how long its marker
+  // enter/exit, which carry `is_active`) -- this is how long its marker
   // highlight and "Triggered" status stay shown after the fact.
   const ALERT_RECENT_MS = 10 * 60 * 1000;
 
@@ -328,7 +328,7 @@
 
   // Alerts configured for the item currently focused from the Alerts tab
   // (see state.alertFocusDeviceId), drawn as one radius circle per alert:
-  // proximity alerts around home, movement alerts around the device's
+  // enter/exit alerts around home, movement alerts around the device's
   // current location -- movement alerts aren't tied to a fixed point, so
   // "how far it can move before triggering" is the closest visual analog.
   // Scoped to alert-tab focus only, not general device selection, so the
@@ -344,7 +344,7 @@
       if (alert.device_id !== state.alertFocusDeviceId) continue;
 
       let center = null;
-      if (alert.alert_type === "proximity" && state.home) {
+      if ((alert.alert_type === "enter" || alert.alert_type === "exit") && state.home) {
         center = [state.home.latitude, state.home.longitude];
       } else if (
         alert.alert_type === "movement" &&
@@ -619,7 +619,7 @@
     }
   }
 
-  // --- Alerts: movement / proximity-to-home, configured per device -----------
+  // --- Alerts: movement / enter-radius / exit-radius, configured per device --
   //
   // Configured alerts live in their own sidebar tab (rendered into the same
   // <ul> as the device/item tabs, styled the same way) with a delete button
@@ -627,15 +627,17 @@
   // a focus-managed <dialog>, built once and reused like the icon-editor
   // dialog -- keeps the tab itself down to a list plus one button instead of
   // a permanently-visible form. Evaluation itself happens server-side
-  // (src/alerts.py, from the poller); the frontend only reads
+  // (src/alerts.py, from the poller, with a cooldown between repeat
+  // notifications for the same alert); the frontend only reads
   // `is_active`/`triggered_at` off GET /alerts and manages config.
 
-  const ALERT_TYPE_LABELS = { movement: "Moves more than", proximity: "Comes within" };
+  const ALERT_TYPE_LABELS = { movement: "Moves more than", enter: "Enters within", exit: "Leaves beyond" };
+  const RADIUS_ALERT_TYPES = new Set(["enter", "exit"]);
 
   function deviceHasActiveAlert(deviceId) {
     return state.alerts.some((alert) => {
       if (alert.device_id !== deviceId) return false;
-      if (alert.alert_type === "proximity") return alert.is_active;
+      if (RADIUS_ALERT_TYPES.has(alert.alert_type)) return alert.is_active;
       if (!alert.triggered_at) return false;
       return Date.now() - new Date(alert.triggered_at).getTime() < ALERT_RECENT_MS;
     });
@@ -643,7 +645,7 @@
 
   function alertStatusText(alert) {
     const triggered = alert.triggered_at ? formatRelativeTime(alert.triggered_at) : null;
-    if (alert.alert_type === "proximity") {
+    if (RADIUS_ALERT_TYPES.has(alert.alert_type)) {
       if (alert.is_active) return `Inside — triggered ${triggered}`;
       return triggered ? `OK — last triggered ${triggered}` : "OK";
     }
@@ -651,7 +653,7 @@
   }
 
   function isAlertCurrentlyFlagged(alert) {
-    return alert.alert_type === "proximity" ? alert.is_active : deviceHasActiveAlert(alert.device_id);
+    return RADIUS_ALERT_TYPES.has(alert.alert_type) ? alert.is_active : deviceHasActiveAlert(alert.device_id);
   }
 
   // Built on the same device-row/device-text/device-name/device-subtitle
@@ -704,8 +706,9 @@
   let alertDialogTrigger = null;
 
   function updateAlertDialogThresholdUnitLabel() {
-    alertDialogThresholdUnit.textContent =
-      alertDialogTypeSelect.value === "proximity" ? "m from home" : "m between fixes";
+    alertDialogThresholdUnit.textContent = RADIUS_ALERT_TYPES.has(alertDialogTypeSelect.value)
+      ? "m from home"
+      : "m between fixes";
   }
 
   function buildAlertDialog() {
