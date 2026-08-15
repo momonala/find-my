@@ -160,6 +160,40 @@ def _ensure_session() -> None:
     account.to_json(_ACCOUNT_FILE)
 
 
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_event_loop() -> asyncio.AbstractEventLoop:
+    """Return a process-wide event loop, reused across poll cycles.
+
+    `asyncio.run()` creates a fresh loop (and its default `ThreadPoolExecutor`)
+    on every call and tears it down afterwards; at a 60-second poll interval
+    that leaks accumulating idle executor threads. Reusing one loop lets the
+    executor's threads be reused instead of recreated each cycle.
+    """
+    global _event_loop
+    if _event_loop is None or _event_loop.is_closed():
+        _event_loop = asyncio.new_event_loop()
+    return _event_loop
+
+
+_anisette_provider: LocalAnisetteProvider | None = None
+
+
+def _get_anisette_provider(state: dict) -> LocalAnisetteProvider:
+    """Return the process-wide Anisette provider, building it once from cached state.
+
+    A new unicorn VM is spun up to build one of these, so it's built once and
+    reused rather than recreated on every poll cycle. The provider has its own
+    internal VM-restart mechanism for its allocator's memory leak, but that only
+    kicks in if the same instance survives across calls.
+    """
+    global _anisette_provider
+    if _anisette_provider is None:
+        _anisette_provider = LocalAnisetteProvider.from_json(state["anisette"], libs_path=_ANISETTE_LIBS)
+    return _anisette_provider
+
+
 async def _locate(
     accessories: list[FindMyAccessory],
 ) -> dict[FindMyAccessory, LocationReport | None]:
@@ -170,10 +204,7 @@ async def _locate(
     demand 2FA again.
     """
     state = json.loads(_ACCOUNT_FILE.read_text())
-    account = AsyncAppleAccount(
-        LocalAnisetteProvider.from_json(state["anisette"], libs_path=_ANISETTE_LIBS),
-        state_info=state,
-    )
+    account = AsyncAppleAccount(_get_anisette_provider(state), state_info=state)
     try:
         locations = await locate_accessories(accessories, account)
         account.to_json(_ACCOUNT_FILE)
@@ -195,7 +226,7 @@ def fetch_airtags(refresh_keys: bool = False) -> list[TrackedItem]:
     if not accessories:
         return []
 
-    locations = asyncio.run(_locate(accessories))
+    locations = _get_event_loop().run_until_complete(_locate(accessories))
     # Locating advances each accessory's rolling-key alignment in place;
     # persisting it here is what keeps later runs from rescanning weeks of keys.
     _save_trackers(accessories)
