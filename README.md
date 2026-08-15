@@ -116,12 +116,15 @@ Deployments running more than one web worker should pass `--no-poll` and run the
 process — `uv run findmy poll` — so exactly one process ever writes to the database; `install/` ships it as a
 separate systemd unit for that reason.
 
-`src/db.py` keeps four tables: `devices` (latest name/kind per device), `location_history` (one row per fix —
+`src/db.py` keeps five tables: `devices` (latest name/kind per device), `location_history` (one row per fix —
 only written when coordinates actually change from the last stored fix, so repeated identical reports from
-Apple's network don't grow the table), `device_icons` (the marker emoji set via the dashboard), and `alerts`
-(user-configured movement/enter/exit alerts, evaluated by `src/alerts.py` from the poller — `enter`/`exit`
-alerts measure from home by default, or from a fixed point snapshotted at creation time if the dashboard's
-"Measured from: Current location" option was used). Schema itself is owned by
+Apple's network don't grow the table), `device_icons` (the marker emoji set via the dashboard), `alerts`
+(user-configured movement/enter/exit alert definitions plus current `is_active` state, evaluated by
+`src/alerts.py` from the poller — `enter`/`exit` alerts measure from home by default, or from a fixed point
+snapshotted at creation time if the dashboard's "Measured from: Current location" option was used), and
+`alert_events` (one row per time an alert actually fired, kept separate from `alerts` so config/current-state
+and trigger history don't share a row — an alert's `triggered_at` in the API is computed as the latest matching
+`alert_events` row, not stored on `alerts` itself). Schema itself is owned by
 [Alembic](#schema-migrations), not `db.py` directly.
 
 | Route | Returns |

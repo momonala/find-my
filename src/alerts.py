@@ -29,6 +29,11 @@ simply retried on the next cycle -- `is_active` is only updated when the
 alert actually fires -- so the notification just lands late rather than
 being lost.
 
+A firing writes a row to `alert_events` (see migrations/versions/0003_alert_events.py)
+-- `alerts.is_active` is current state, not history, and holds no timestamp of
+its own; `_cooldown_elapsed` and the dashboard's `triggered_at` both read the
+latest `alert_events` row for an alert instead.
+
 Delivery is in-app (the dashboard reads `is_active`/`triggered_at` off
 GET /alerts) plus an optional Telegram push from src/telegram.py, fired from
 the same transitions.
@@ -91,7 +96,7 @@ def _check_movement(
         previous["latitude"], previous["longitude"], current["latitude"], current["longitude"]
     )
     if moved_m > alert["threshold_m"] and _cooldown_elapsed(alert, now):
-        db.set_alert_state(conn, alert["id"], is_active=bool(alert["is_active"]), triggered_at=now)
+        db.log_alert_event(conn, alert["id"], now)
         metrics.increment("movement_triggered")
         _notify(send_movement_alert, alert, moved_m)
 
@@ -109,7 +114,8 @@ def _check_radius_crossing(
     notify_transition = inside and not was_inside if is_enter else not inside and was_inside
     if notify_transition:
         if _cooldown_elapsed(alert, now):
-            db.set_alert_state(conn, alert["id"], is_active=inside, triggered_at=now)
+            db.set_alert_active(conn, alert["id"], is_active=inside)
+            db.log_alert_event(conn, alert["id"], now)
             metrics.increment(f"{alert['alert_type']}_triggered")
             _notify(send_enter_alert if is_enter else send_exit_alert, alert)
         # else: leave is_active as-is, so this transition is retried (and the
@@ -117,8 +123,9 @@ def _check_radius_crossing(
     elif inside != was_inside:
         # The opposite transition, for this alert's type -- just keep
         # is_active accurate so the next real crossing is detected correctly.
-        # Silent and not cooldown-gated: it's bookkeeping, not a notification.
-        db.set_alert_state(conn, alert["id"], is_active=inside, triggered_at=alert["triggered_at"])
+        # Silent and not cooldown-gated: it's bookkeeping, not a notification
+        # (no alert_events row).
+        db.set_alert_active(conn, alert["id"], is_active=inside)
 
 
 def _cooldown_elapsed(alert: sqlite3.Row, now: str) -> bool:
