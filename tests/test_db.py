@@ -15,9 +15,10 @@ from src.db import get_alert
 from src.db import history_for
 from src.db import latest_location_for
 from src.db import list_alerts
+from src.db import log_alert_event
 from src.db import record_fetch
 from src.db import remove_alert
-from src.db import set_alert_state
+from src.db import set_alert_active
 from src.db import set_device_icon
 from tests.conftest import make_item
 from tests.conftest import make_location
@@ -156,19 +157,36 @@ def test_remove_unknown_alert_returns_false(conn):
     assert remove_alert(conn, 999) is False
 
 
-def test_set_alert_state_updates_is_active_and_triggered_at(conn):
+def test_set_alert_active_updates_is_active(conn):
     record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
     alert_id = create_alert(conn, "tag-1", "exit", 100)
 
-    set_alert_state(conn, alert_id, is_active=True, triggered_at="2026-01-01T00:00:00+00:00")
+    set_alert_active(conn, alert_id, is_active=True)
 
-    row = get_alert(conn, alert_id)
-    assert row["is_active"] == 1
-    assert row["triggered_at"] == "2026-01-01T00:00:00+00:00"
+    assert get_alert(conn, alert_id)["is_active"] == 1
 
 
-def test_set_alert_state_for_unknown_alert_is_a_no_op(conn):
-    set_alert_state(conn, 999, is_active=True, triggered_at="2026-01-01T00:00:00+00:00")  # must not raise
+def test_set_alert_active_for_unknown_alert_is_a_no_op(conn):
+    set_alert_active(conn, 999, is_active=True)  # must not raise
+
+
+def test_log_alert_event_is_reflected_as_triggered_at(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+    alert_id = create_alert(conn, "tag-1", "exit", 100)
+
+    log_alert_event(conn, alert_id, "2026-01-01T00:00:00+00:00")
+
+    assert get_alert(conn, alert_id)["triggered_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_log_alert_event_triggered_at_is_the_latest_event(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+    alert_id = create_alert(conn, "tag-1", "exit", 100)
+
+    log_alert_event(conn, alert_id, "2026-01-01T00:00:00+00:00")
+    log_alert_event(conn, alert_id, "2026-01-02T00:00:00+00:00")
+
+    assert get_alert(conn, alert_id)["triggered_at"] == "2026-01-02T00:00:00+00:00"
 
 
 def test_init_db_is_idempotent(conn, tmp_path):
@@ -196,6 +214,6 @@ def test_init_db_runs_alembic_migrations_to_head(tmp_path):
     init_db(db_path)
 
     conn = get_connection(db_path)
-    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == "0002"
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == "0003"
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
     assert {"anchor_lat", "anchor_lon"} <= columns

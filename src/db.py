@@ -1,16 +1,20 @@
 """SQLite persistence for the Flask API: current devices, location history,
 user-assigned marker emoji, and configured alerts.
 
-Four tables: `devices` holds the latest known metadata per device (upserted
+Five tables: `devices` holds the latest known metadata per device (upserted
 on every poll), `location_history` holds one row per fix but only when a
 fix's coordinates differ from the previously stored one for that device --
 repeated identical reports from Apple's network don't grow the table --
 `device_icons` holds an optional emoji per device, set via the API rather
 than fetched from Apple (see src/api.py's PUT /locations/<id>/icon -- Apple
 doesn't expose the per-item emoji you pick in the Find My app to either
-`pyicloud` or `findmy`), and `alerts` holds user-configured movement/enter/exit
-alerts, evaluated by src/alerts.py from the background poller. See
-src/poller.py for what writes here and src/api.py for what reads it.
+`pyicloud` or `findmy`), `alerts` holds user-configured movement/enter/exit
+alerts and their current `is_active` state, and `alert_events` holds one row
+per time an alert actually fired -- kept separate from `alerts` so config/
+current-state and trigger history don't share a row (see
+migrations/versions/0003_alert_events.py). Both are evaluated by
+src/alerts.py from the background poller. See src/poller.py for what writes
+here and src/api.py for what reads it.
 
 Schema itself is owned by Alembic (see migrations/) -- init_db() below runs
 `alembic upgrade head` rather than issuing DDL directly. Everything else in
@@ -260,10 +264,13 @@ def history_for(
 
 
 # The projection alert reads share, joined with devices for a name/icon to
-# display without a second query. Callers append their own WHERE/ORDER BY.
+# display without a second query. `triggered_at` is the alert's last firing,
+# computed from alert_events rather than stored on the row -- see
+# migrations/versions/0003_alert_events.py. Callers append their own WHERE/ORDER BY.
 _ALERT_WITH_DEVICE = """
 SELECT a.id, a.device_id, d.name AS device_name, di.emoji AS device_icon,
-       a.alert_type, a.threshold_m, a.created_at, a.is_active, a.triggered_at,
+       a.alert_type, a.threshold_m, a.created_at, a.is_active,
+       (SELECT MAX(triggered_at) FROM alert_events WHERE alert_id = a.id) AS triggered_at,
        a.anchor_lat, a.anchor_lon
 FROM alerts a
 JOIN devices d ON d.id = a.device_id
@@ -332,16 +339,19 @@ def remove_alert(conn: sqlite3.Connection, alert_id: int) -> bool:
     return cursor.rowcount > 0
 
 
-def set_alert_state(
-    conn: sqlite3.Connection, alert_id: int, *, is_active: bool, triggered_at: str | None
-) -> None:
-    """Update an alert's triggered state.
+def set_alert_active(conn: sqlite3.Connection, alert_id: int, *, is_active: bool) -> None:
+    """Update an alert's current enter/exit state.
 
     A no-op (not an error) if `alert_id` no longer exists -- it can be deleted
     via the API in the moment between src.alerts reading it and writing this.
     """
     with conn:
+        conn.execute("UPDATE alerts SET is_active = ? WHERE id = ?", (int(is_active), alert_id))
+
+
+def log_alert_event(conn: sqlite3.Connection, alert_id: int, triggered_at: str) -> None:
+    """Record that an alert fired, for cooldown gating and trigger history."""
+    with conn:
         conn.execute(
-            "UPDATE alerts SET is_active = ?, triggered_at = ? WHERE id = ?",
-            (int(is_active), triggered_at, alert_id),
+            "INSERT INTO alert_events (alert_id, triggered_at) VALUES (?, ?)", (alert_id, triggered_at)
         )

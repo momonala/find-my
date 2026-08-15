@@ -18,8 +18,8 @@ from src.config import HOME_LATITUDE
 from src.config import HOME_LONGITUDE
 from src.db import alerts_for_device
 from src.db import create_alert
+from src.db import log_alert_event
 from src.db import record_fetch
-from src.db import set_alert_state
 from tests.conftest import make_item
 from tests.conftest import make_location
 from tests.conftest import minutes_later
@@ -97,7 +97,7 @@ def test_movement_alert_refires_once_the_cooldown_elapses(conn):
     # check_alerts gates the cooldown on wall-clock time, not the fix's own
     # timestamp, so simulate an elapsed cooldown by backdating directly.
     backdated = (datetime.now(UTC) - COOLDOWN_LATER).isoformat()
-    set_alert_state(conn, alert_id, is_active=False, triggered_at=backdated)
+    log_alert_event(conn, alert_id, backdated)
 
     second = record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4, minutes_later(2)))])
     check_alerts(conn, second.moved_device_ids)
