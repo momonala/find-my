@@ -639,10 +639,17 @@
   const ALERT_TYPE_LABELS = { movement: "Moves more than", enter: "Enters within", exit: "Leaves beyond" };
   const RADIUS_ALERT_TYPES = new Set(["enter", "exit"]);
 
+  // `is_active` always means "currently inside the anchor radius" (see
+  // src/alerts.py). That's the alarm condition for `enter` alerts, but for
+  // `exit` alerts the alarm condition is the opposite -- currently *outside*.
+  function isRadiusAlertAlarmed(alert) {
+    return alert.alert_type === "enter" ? alert.is_active : !alert.is_active;
+  }
+
   function deviceHasActiveAlert(deviceId) {
     return state.alerts.some((alert) => {
       if (alert.device_id !== deviceId) return false;
-      if (RADIUS_ALERT_TYPES.has(alert.alert_type)) return alert.is_active;
+      if (RADIUS_ALERT_TYPES.has(alert.alert_type)) return isRadiusAlertAlarmed(alert);
       if (!alert.triggered_at) return false;
       return Date.now() - new Date(alert.triggered_at).getTime() < ALERT_RECENT_MS;
     });
@@ -651,14 +658,17 @@
   function alertStatusText(alert) {
     const triggered = alert.triggered_at ? formatRelativeTime(alert.triggered_at) : null;
     if (RADIUS_ALERT_TYPES.has(alert.alert_type)) {
-      if (alert.is_active) return `Inside — triggered ${triggered}`;
+      if (isRadiusAlertAlarmed(alert)) {
+        const state = alert.alert_type === "enter" ? "Inside" : "Outside";
+        return `${state} — triggered ${triggered}`;
+      }
       return triggered ? `OK — last triggered ${triggered}` : "OK";
     }
     return triggered ? `Triggered ${triggered}` : "No alert yet";
   }
 
   function isAlertCurrentlyFlagged(alert) {
-    return RADIUS_ALERT_TYPES.has(alert.alert_type) ? alert.is_active : deviceHasActiveAlert(alert.device_id);
+    return RADIUS_ALERT_TYPES.has(alert.alert_type) ? isRadiusAlertAlarmed(alert) : deviceHasActiveAlert(alert.device_id);
   }
 
   // Built on the same device-row/device-text/device-name/device-subtitle
