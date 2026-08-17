@@ -248,15 +248,6 @@ input:focus-visible {
   overflow: hidden;
 }
 
-/* Plain passthrough on desktop -- exists so the drag listeners below have a
-   single surface spanning the handle + tabs, without changing their stacked
-   layout inside .sidebar's column flex. */
-.sheet-drag-zone {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 auto;
-}
-
 .tab-switcher {
   flex: 0 0 auto;
   display: flex;
@@ -295,25 +286,6 @@ input:focus-visible {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
-}
-
-/* Collapsed to a peek, the tab row is the only thing left on screen (see the
-   sidebar[data-snap="peek"] rule below that hides everything else) -- swap
-   each label for its icon so the row reads at a glance, iOS Find My style,
-   instead of squeezing three words into a thin bar. The label is visually
-   hidden rather than removed (display:none would also drop it from the
-   accessibility tree), so the button's accessible name is unchanged whether
-   the sheet is peeking or expanded. */
-.sidebar.is-sheet[data-snap="peek"] .tab-icon {
-  display: block;
-}
-
-.sidebar.is-sheet[data-snap="peek"] .tab-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
 }
 
 .sidebar-toolbar {
@@ -510,6 +482,17 @@ input:focus-visible {
   text-overflow: ellipsis;
 }
 
+/* Alert rows only -- kept off .device-subtitle's single line (see
+   alertTriggeredText() in dashboard.js) since that line's fixed width and
+   ellipsis were truncating it away entirely. */
+.device-triggered {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .list-empty {
   flex: 0 0 auto;
   margin: 0;
@@ -655,87 +638,64 @@ input:focus-visible {
   background: var(--color-danger-bg);
 }
 
-/* --- Sheet drag handle ----------------------------------------------------
-   Only shown once dashboard.js adds .is-sheet to the sidebar (it does this
-   exactly when the mobile breakpoint below is active), so the breakpoint
-   lives in one place: the JS media query, not a duplicated one here. */
-
-.sheet-handle {
+/* --- Hamburger toggle + backdrop ------------------------------------------
+   Desktop has room to keep the sidebar permanently open; below the mobile
+   breakpoint it becomes an off-canvas drawer instead (see .sidebar rules in
+   the media query below), so it needs an explicit control to open it and a
+   backdrop to close it by tapping outside. Both are no-ops above the
+   breakpoint -- hidden here, not conditionally rendered, since a resize
+   shouldn't need JS to reconcile them. */
+.sidebar-toggle {
   display: none;
 }
 
-/* The whole zone -- handle bar and tab row -- is the drag surface, not just
-   the handle's thin pill, so grabbing the sheet doesn't need pixel-precision.
-   touch-action: none stops the browser treating a vertical drag here as a
-   page scroll/pull-to-refresh before dashboard.js's pointermove sees it. */
-.sidebar.is-sheet .sheet-drag-zone {
-  cursor: grab;
-  touch-action: none;
-}
-
-.sidebar.is-sheet .sheet-drag-zone:active {
-  cursor: grabbing;
-}
-
-.sidebar.is-sheet .sheet-handle {
-  display: flex;
-  flex: 0 0 auto;
-  justify-content: center;
-  align-items: center;
-  width: 100%;
-  background: none;
-  border: none;
-  padding: var(--space-2) 0 var(--space-1);
-  margin: 0;
-}
-
-.sheet-handle-bar {
-  width: 36px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--color-text-muted);
-  opacity: 0.6;
-}
-
-/* Collapsed to a peek: only the handle and the category tabs stay visible
-   (standing in for the separate People/Devices/Items/Me tab bar the real
-   Find My app keeps below its sheet -- ours lives inside the sheet, so it
-   has to stay put rather than disappear with everything else). */
-.sidebar[data-snap="peek"] .sidebar-toolbar,
-.sidebar[data-snap="peek"] .device-list,
-.sidebar[data-snap="peek"] .list-empty {
+.sidebar-backdrop {
   display: none;
-}
-
-/* Hide sorting filters in peek and half views for a cleaner mobile UX */
-.sidebar.is-sheet[data-snap="peek"] .sort-group,
-.sidebar.is-sheet[data-snap="half"] .sort-group {
-  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: rgba(0, 0, 0, 0.4);
 }
 
 /* --- Small screens -------------------------------------------------------
-   Below this width the sidebar becomes a draggable bottom sheet (peek/half/
-   full, snapped by dashboard.js) instead of an absolutely-positioned panel
-   wide enough to cover nearly the whole map. */
+   Below this width the sidebar becomes an off-canvas drawer (slid in from
+   the left over the map, opened via the hamburger button) instead of an
+   always-visible panel -- there isn't room to keep both the list and the
+   map usable at once. */
 
 @media (max-width: 640px) {
-  .sidebar {
-    top: auto;
+  .sidebar-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: var(--space-2);
     left: var(--space-2);
-    right: var(--space-2);
-    bottom: var(--space-2);
-    width: auto;
+    z-index: 11;
+    width: var(--toolbar-height);
+    padding: 0;
+  }
+
+  .sidebar-backdrop.is-open {
+    display: block;
+  }
+
+  .sidebar {
+    top: 0;
+    left: 0;
+    right: auto;
+    bottom: 0;
+    width: min(85vw, 340px);
     max-width: none;
-    height: 45vh;
-    max-height: calc(100vh - 96px);
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   }
 
-  .sidebar.is-sheet {
-    transition: height 0.28s cubic-bezier(0.32, 0.72, 0, 1);
-  }
-
-  .sidebar.is-sheet.is-dragging {
-    transition: none;
+  .sidebar.is-open {
+    transform: translateX(0);
   }
 
   .map-toolbar {

@@ -23,7 +23,7 @@
   const TAB_KEYS = ["device", "item", "alert"];
   // Which device/item is auto-selected on first load, per tab -- lets the
   // dashboard open with a sensible default view instead of an empty map.
-  const DEFAULT_SELECTED_NAME_BY_SOURCE = { device: "Momo", item: "Ema" };
+  const DEFAULT_SELECTED_NAME_BY_SOURCE = { item: "Ema" };
   // A movement alert is an instantaneous event, not a standing state (unlike
   // enter/exit, which carry `is_active`) -- this is how long its marker
   // highlight and "Triggered" status stay shown after the fact.
@@ -70,8 +70,8 @@
   const warningBannerEl = document.getElementById("warning-banner");
   const deviceToolbarEl = document.getElementById("device-toolbar");
   const sidebarEl = document.querySelector(".sidebar");
-  const sheetHandleEl = document.getElementById("sheet-handle");
-  const sheetDragZoneEl = document.querySelector(".sheet-drag-zone");
+  const sidebarToggleEl = document.getElementById("sidebar-toggle");
+  const sidebarBackdropEl = document.getElementById("sidebar-backdrop");
   const alertEmptyEl = document.getElementById("alert-empty");
   const alertAddOpenButton = document.getElementById("alert-add-open");
 
@@ -526,6 +526,9 @@
     state.alertFocusDeviceId = alertFocus ? deviceId : null;
     renderDeviceList();
     reloadTracks();
+    // Isolating means "show me this one on the map" -- on mobile the drawer
+    // is covering that map, so close it rather than leaving the user to.
+    if (MOBILE_QUERY.matches) setSidebarOpen(false);
   }
 
   // --- Icon editor: a small focus-managed dialog instead of window.prompt ----
@@ -655,16 +658,20 @@
     });
   }
 
-  function alertStatusText(alert) {
-    const triggered = alert.triggered_at ? formatRelativeTime(alert.triggered_at) : null;
+  // Kept separate from the "last triggered" time (below) rather than one
+  // combined string: the combined version got squeezed off the end of the
+  // single-line, ellipsis-truncated subtitle, making the triggered time
+  // effectively invisible. Splitting it onto its own line keeps it visible.
+  function alertStateText(alert) {
     if (RADIUS_ALERT_TYPES.has(alert.alert_type)) {
-      if (isRadiusAlertAlarmed(alert)) {
-        const state = alert.alert_type === "enter" ? "Inside" : "Outside";
-        return `${state} — triggered ${triggered}`;
-      }
-      return triggered ? `OK — last triggered ${triggered}` : "OK";
+      if (isRadiusAlertAlarmed(alert)) return alert.alert_type === "enter" ? "Inside" : "Outside";
+      return "OK";
     }
-    return triggered ? `Triggered ${triggered}` : "No alert yet";
+    return alert.triggered_at ? "Triggered" : "No alert yet";
+  }
+
+  function alertTriggeredText(alert) {
+    return alert.triggered_at ? `Last triggered ${formatRelativeTime(alert.triggered_at)}` : null;
   }
 
   function isAlertCurrentlyFlagged(alert) {
@@ -695,8 +702,16 @@
     const subtitle = document.createElement("span");
     subtitle.className = "device-subtitle";
     subtitle.classList.toggle("is-alert-active", isAlertCurrentlyFlagged(alert));
-    subtitle.textContent = `${ALERT_TYPE_LABELS[alert.alert_type]} ${Math.round(alert.threshold_m)} m · ${alertStatusText(alert)}`;
+    subtitle.textContent = `${ALERT_TYPE_LABELS[alert.alert_type]} ${Math.round(alert.threshold_m)} m · ${alertStateText(alert)}`;
     text.append(name, subtitle);
+
+    const triggeredText = alertTriggeredText(alert);
+    if (triggeredText) {
+      const triggered = document.createElement("span");
+      triggered.className = "device-triggered";
+      triggered.textContent = triggeredText;
+      text.append(triggered);
+    }
 
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
@@ -988,128 +1003,29 @@
     reloadTracks();
   });
 
-  // --- Mobile bottom sheet ----------------------------------------------
+  // --- Mobile sidebar drawer ----------------------------------------------
   //
-  // Below MOBILE_QUERY the sidebar becomes a draggable bottom sheet, like the
-  // real Find My app's device list: drag the header down to collapse it out
-  // of the way and see the full map, or up to expand it. Snap heights are
-  // computed in px (not left as a CSS max-height) since dragging needs a
-  // concrete number to animate towards and compare the release position to.
+  // Below MOBILE_QUERY the sidebar is an off-canvas drawer (translated out of
+  // view, see dashboard.css) opened via the hamburger button, rather than the
+  // always-visible panel desktop gets -- there isn't room for both the list
+  // and a usable map at once.
   const MOBILE_QUERY = window.matchMedia("(max-width: 640px)");
-  const SHEET_SNAPS = ["peek", "half", "full"];
-  // Below this speed (px/ms of vertical finger travel) a release is treated
-  // as a slow drag and snaps to whichever point it's physically closest to;
-  // above it, a quick flick jumps one step in the flick's direction even if
-  // it only traveled a few px -- same "decisive flick" feel as iOS sheets.
-  const SHEET_FLING_PX_PER_MS = 0.5;
-  // Ignored below this, so a stationary finger with jittery touch samples
-  // doesn't register as a tiny fling.
-  const SHEET_DRAG_SLOP_PX = 4;
-  let sheetSnap = "half";
-  // Set only while a drag is in progress; null the rest of the time.
-  let sheetDrag = null;
 
-  function sheetHeightFor(snap) {
-    const viewport = window.innerHeight;
-    if (snap === "peek") return sheetHandleEl.offsetHeight + tabSwitcherEl.offsetHeight;
-    if (snap === "full") return Math.min(viewport * 0.85, viewport - 96);
-    return viewport * 0.45;
+  function setSidebarOpen(open) {
+    sidebarEl.classList.toggle("is-open", open);
+    sidebarBackdropEl.classList.toggle("is-open", open);
+    sidebarToggleEl.setAttribute("aria-expanded", String(open));
   }
 
-  function applySheetSnap(snap) {
-    sheetSnap = snap;
-    sidebarEl.dataset.snap = snap;
-    sidebarEl.style.height = `${sheetHeightFor(snap)}px`;
-    sheetHandleEl.setAttribute("aria-expanded", String(snap !== "peek"));
-  }
-
-  function syncMobileSheet() {
-    sidebarEl.classList.toggle("is-sheet", MOBILE_QUERY.matches);
-    if (MOBILE_QUERY.matches) {
-      applySheetSnap(sheetSnap);
-    } else {
-      sidebarEl.classList.remove("is-dragging");
-      delete sidebarEl.dataset.snap;
-      sidebarEl.style.height = "";
-      sheetDrag = null;
-    }
-  }
-
-  function endSheetDrag() {
-    if (!sheetDrag) return;
-    sidebarEl.classList.remove("is-dragging");
-    if (sheetDrag.moved) {
-      const startIndex = SHEET_SNAPS.indexOf(sheetSnap);
-      if (Math.abs(sheetDrag.velocity) > SHEET_FLING_PX_PER_MS) {
-        // Positive velocity means the finger's last movement was downward
-        // (clientY increasing), which shrinks the sheet -- so fling down
-        // steps toward "peek" (index 0) and fling up toward "full".
-        const direction = sheetDrag.velocity > 0 ? -1 : 1;
-        const nextIndex = Math.min(SHEET_SNAPS.length - 1, Math.max(0, startIndex + direction));
-        applySheetSnap(SHEET_SNAPS[nextIndex]);
-      } else {
-        const currentHeight = sidebarEl.getBoundingClientRect().height;
-        const nearest = SHEET_SNAPS.reduce((best, snap) =>
-          Math.abs(sheetHeightFor(snap) - currentHeight) < Math.abs(sheetHeightFor(best) - currentHeight) ? snap : best
-        );
-        applySheetSnap(nearest);
-      }
-    } else if (sheetDrag.isHandleTap) {
-      // A tap on the handle itself (not the tab row -- those have their own
-      // click behavior) rather than a drag: step to the next snap point.
-      applySheetSnap(SHEET_SNAPS[(SHEET_SNAPS.indexOf(sheetSnap) + 1) % SHEET_SNAPS.length]);
-    }
-    sheetDrag = null;
-  }
-
-  sheetDragZoneEl.addEventListener("pointerdown", (event) => {
-    if (!MOBILE_QUERY.matches) return;
-    // Pointer capture isn't taken here: Chromium retargets the eventual
-    // click to the capture target too, not just pointer events, which would
-    // silently eat every tap on a tab button. It's taken only once the
-    // pointermove handler below confirms this is an actual drag.
-    sheetDrag = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startHeight: sidebarEl.getBoundingClientRect().height,
-      moved: false,
-      isHandleTap: event.target.closest("#sheet-handle") !== null,
-      lastY: event.clientY,
-      lastT: event.timeStamp,
-      velocity: 0,
-    };
+  sidebarToggleEl.addEventListener("click", () => {
+    setSidebarOpen(!sidebarEl.classList.contains("is-open"));
   });
 
-  sheetDragZoneEl.addEventListener("pointermove", (event) => {
-    if (!sheetDrag) return;
-    const deltaY = event.clientY - sheetDrag.startY;
-    if (!sheetDrag.moved && Math.abs(deltaY) <= SHEET_DRAG_SLOP_PX) return;
-    if (!sheetDrag.moved) sheetDragZoneEl.setPointerCapture(sheetDrag.pointerId);
-    sheetDrag.moved = true;
-    sidebarEl.classList.add("is-dragging");
+  sidebarBackdropEl.addEventListener("click", () => setSidebarOpen(false));
 
-    const elapsed = event.timeStamp - sheetDrag.lastT;
-    if (elapsed > 0) {
-      // Exponential smoothing over raw per-sample speed -- a single rushed or
-      // sparse sample would otherwise spike the velocity used at release.
-      const instantVelocity = (event.clientY - sheetDrag.lastY) / elapsed;
-      sheetDrag.velocity = sheetDrag.velocity * 0.7 + instantVelocity * 0.3;
-      sheetDrag.lastY = event.clientY;
-      sheetDrag.lastT = event.timeStamp;
-    }
-
-    const height = Math.min(sheetHeightFor("full"), Math.max(sheetHeightFor("peek"), sheetDrag.startHeight - deltaY));
-    sidebarEl.style.height = `${height}px`;
-  });
-
-  sheetDragZoneEl.addEventListener("pointerup", endSheetDrag);
-  sheetDragZoneEl.addEventListener("pointercancel", endSheetDrag);
-
-  MOBILE_QUERY.addEventListener("change", syncMobileSheet);
-  window.addEventListener("resize", () => {
-    if (MOBILE_QUERY.matches) sidebarEl.style.height = `${sheetHeightFor(sheetSnap)}px`;
-  });
-  syncMobileSheet();
+  // A resize past the breakpoint (e.g. rotating to landscape) shouldn't leave
+  // a desktop-width sidebar stuck in the "open" drawer state.
+  MOBILE_QUERY.addEventListener("change", () => setSidebarOpen(false));
 
   function refreshAll() {
     // loadAlerts() runs alongside loadDevices()/loadStatus() rather than
