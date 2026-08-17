@@ -61,7 +61,7 @@
   const tabSwitcherEl = document.querySelector(".tab-switcher");
   const sortGroupEl = document.querySelector(".sort-group");
   const timeRangeEl = document.getElementById("time-range");
-  const historyToggleEl = document.getElementById("history-toggle");
+  let historyToggleEl = null; // built inside the map style dialog
   const selectAllButton = document.getElementById("select-all");
   const selectNoneButton = document.getElementById("select-none");
   const trackEmptyEl = document.getElementById("track-empty");
@@ -205,9 +205,7 @@
   // --- Header: last full poll cycle ---------------------------------------
 
   function formatLastUpdatedText(isoString) {
-    const isMobile = window.matchMedia("(max-width: 640px)").matches;
-    const relativeTime = isoString ? formatRelativeTime(isoString) : "—";
-    return isMobile ? relativeTime : `Last updated ${relativeTime}`;
+    return isoString ? formatRelativeTime(isoString) : "—";
   }
 
   async function loadStatus() {
@@ -216,7 +214,7 @@
       lastUpdatedEl.textContent = formatLastUpdatedText(lastUpdated);
     } catch (error) {
       console.error("Failed to load /status", error);
-      lastUpdatedEl.textContent = window.matchMedia("(max-width: 640px)").matches ? "—" : "Last updated —";
+      lastUpdatedEl.textContent = "—";
     }
   }
 
@@ -234,6 +232,7 @@
       if (!config.telegram_configured) {
         showWarning("Telegram alerts aren't configured on the server -- triggered alerts will only show here.");
       }
+      addMapTilerStyles(config.maptiler_key);
     } catch (error) {
       console.error("Failed to load /config", error);
       showFatalError("Could not load home coordinates; centering the map on (0, 0) and hiding distances.");
@@ -242,15 +241,176 @@
     // Default zoom control sits top-left, right under the sidebar.
     map = L.map("map", { center, zoom: DEFAULT_ZOOM, zoomControl: false });
     L.control.zoom({ position: "bottomright" }).addTo(map);
-    // CartoDB "Dark Matter" -- OpenStreetMap data, simplified and dark to match the app.
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      attribution:
-        '&copy; <a href="https://carto.com/attributions">CARTO</a> ' +
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    applyMapStyle(loadMapStyleKey());
+    trackLayerGroup = L.layerGroup().addTo(map);
+  }
+
+  // --- Map style picker ------------------------------------------------------
+
+  let MAP_STYLES = [
+    {
+      key: "voyager",
+      label: "Voyager",
+      url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+      attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+    {
+      key: "dark",
+      label: "Dark Matter",
+      url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+    {
+      key: "positron",
+      label: "Positron",
+      url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+    {
+      key: "osm",
+      label: "OpenStreetMap",
+      url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+  ];
+
+  // MapTiler tiles are far more reliable than raw OSM (their own CDN, generous
+  // free tier), but need an API key -- only offer them once the server says
+  // one is configured (see MAPTILER_API_KEY in src/env.py).
+  const MAPTILER_ATTRIBUTION =
+    '&copy; <a href="https://www.maptiler.com/copyright/" target="_blank">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+  function addMapTilerStyles(key) {
+    if (!key || MAP_STYLES.some((s) => s.key.startsWith("maptiler-"))) return;
+    MAP_STYLES = [
+      ...MAP_STYLES,
+      {
+        key: "maptiler-streets",
+        label: "MapTiler Streets",
+        url: `https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${key}`,
+        attribution: MAPTILER_ATTRIBUTION,
+      },
+      {
+        key: "maptiler-outdoor",
+        label: "MapTiler Outdoor",
+        url: `https://api.maptiler.com/maps/outdoor-v2/{z}/{x}/{y}.png?key=${key}`,
+        attribution: MAPTILER_ATTRIBUTION,
+      },
+      {
+        key: "maptiler-satellite",
+        label: "MapTiler Satellite",
+        url: `https://api.maptiler.com/maps/satellite/{z}/{x}/{y}.jpg?key=${key}`,
+        attribution: MAPTILER_ATTRIBUTION,
+      },
+      {
+        key: "maptiler-dataviz",
+        label: "MapTiler Dataviz",
+        url: `https://api.maptiler.com/maps/dataviz/{z}/{x}/{y}.png?key=${key}`,
+        attribution: MAPTILER_ATTRIBUTION,
+      },
+    ];
+    updateMapStyleDialog();
+  }
+
+  const MAP_STYLE_KEY = "mapStyle";
+  let activeTileLayer = null;
+
+  function loadMapStyleKey() {
+    return localStorage.getItem(MAP_STYLE_KEY) || "voyager";
+  }
+
+  function applyMapStyle(key) {
+    const style = MAP_STYLES.find((s) => s.key === key) || MAP_STYLES[0];
+    if (activeTileLayer) map.removeLayer(activeTileLayer);
+    activeTileLayer = L.tileLayer(style.url, {
+      attribution: style.attribution,
       subdomains: "abcd",
       maxZoom: 20,
     }).addTo(map);
-    trackLayerGroup = L.layerGroup().addTo(map);
+    localStorage.setItem(MAP_STYLE_KEY, style.key);
+  }
+
+  let mapStyleDialog = null;
+  let mapStyleDialogTrigger = null;
+
+  function buildMapStyleDialog() {
+    const dialog = document.createElement("dialog");
+    dialog.className = "icon-dialog";
+
+    // Map style section
+    const styleTitle = document.createElement("p");
+    styleTitle.className = "map-style-dialog-title";
+    styleTitle.textContent = "Map style";
+
+    const list = document.createElement("select");
+    list.className = "map-style-select";
+
+    for (const style of MAP_STYLES) {
+      const option = document.createElement("option");
+      option.value = style.key;
+      option.textContent = style.label;
+      list.append(option);
+    }
+
+    list.addEventListener("change", () => {
+      applyMapStyle(list.value);
+      updateMapStyleDialog();
+    });
+
+    // History toggle section
+    const historyTitle = document.createElement("p");
+    historyTitle.className = "map-style-dialog-title";
+    historyTitle.style.marginTop = "var(--space-4)";
+    historyTitle.textContent = "Options";
+
+    const historyRow = document.createElement("label");
+    historyRow.className = "map-style-toggle-row";
+
+    const historyLabel = document.createElement("span");
+    historyLabel.textContent = "Show history trail";
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "toggle-switch";
+    toggle.setAttribute("role", "switch");
+    toggle.setAttribute("aria-checked", "true");
+    toggle.addEventListener("click", () => {
+      state.showHistory = !state.showHistory;
+      toggle.setAttribute("aria-checked", String(state.showHistory));
+      reloadTracks();
+    });
+    historyToggleEl = toggle;
+
+    historyRow.append(historyLabel, toggle);
+
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "btn-ghost";
+    cancelButton.textContent = "Close";
+    cancelButton.addEventListener("click", () => dialog.close());
+
+    const actions = document.createElement("div");
+    actions.className = "icon-dialog-actions";
+    actions.append(cancelButton);
+
+    dialog.append(styleTitle, list, historyTitle, historyRow, actions);
+    document.body.append(dialog);
+
+    dialog.addEventListener("close", () => mapStyleDialogTrigger?.focus());
+    return dialog;
+  }
+
+  function updateMapStyleDialog() {
+    if (!mapStyleDialog) return;
+    const select = mapStyleDialog.querySelector(".map-style-select");
+    if (select) select.value = loadMapStyleKey();
+  }
+
+  function openMapStyleDialog(triggerElement) {
+    mapStyleDialog ??= buildMapStyleDialog();
+    mapStyleDialogTrigger = triggerElement;
+    updateMapStyleDialog();
+    mapStyleDialog.showModal();
   }
 
   function renderTracks(tracksByDevice) {
@@ -878,6 +1038,10 @@
 
   alertAddOpenButton.addEventListener("click", () => openAlertDialog(alertAddOpenButton));
 
+  document.getElementById("map-style-open").addEventListener("click", (event) => {
+    openMapStyleDialog(event.currentTarget);
+  });
+
   async function createAlertRequest(deviceId, alertType, thresholdM, anchor = "home") {
     try {
       await fetchJson("/alerts", {
@@ -997,11 +1161,6 @@
 
   timeRangeEl.addEventListener("change", () => reloadTracks());
 
-  historyToggleEl.addEventListener("click", () => {
-    state.showHistory = !state.showHistory;
-    historyToggleEl.setAttribute("aria-pressed", String(state.showHistory));
-    reloadTracks();
-  });
 
   // --- Mobile sidebar drawer ----------------------------------------------
   //

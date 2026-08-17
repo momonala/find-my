@@ -172,6 +172,90 @@ input:focus-visible {
   box-shadow: var(--shadow-md);
 }
 
+.last-updated-group {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.btn-icon {
+  padding: 0;
+  width: var(--toolbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map-style-dialog-title {
+  margin: 0 0 var(--space-3);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.map-style-select {
+  font: inherit;
+  font-size: 0.9rem;
+  width: 100%;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  transition: border-color 0.1s;
+}
+
+.map-style-select:hover,
+.map-style-select:focus {
+  border-color: var(--color-accent);
+}
+
+.map-style-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  padding: var(--space-2) 0;
+  cursor: default;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  background: var(--color-border);
+  border: none;
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background 0.2s;
+  padding: 0;
+}
+
+.toggle-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 0.2s;
+}
+
+.toggle-switch[aria-checked="true"] {
+  background: var(--color-accent);
+}
+
+.toggle-switch[aria-checked="true"]::after {
+  transform: translateX(18px);
+}
+
 /* Stacked below the toolbar via flow layout (not a hardcoded top offset that
    would silently drift out of sync with the toolbar's real height). */
 .banner-stack {
@@ -723,24 +807,26 @@ input:focus-visible {
     padding: 0 var(--space-2);
   }
 
+  .btn-icon {
+    width: calc(var(--toolbar-height) * 0.85);
+  }
+
   .map-toolbar select {
     flex: 0 1 auto;
     min-width: 0;
   }
 
-  .last-updated {
+  .last-updated-group {
     flex: 0 1 auto;
     min-width: 0;
-    /* dashboard.js shows only the bare relative time on mobile (e.g. "2 min
-       ago"), not the "Last updated" prefix, so this rarely needs to wrap --
-       height:auto/min-height (rather than the fixed --toolbar-height) is a
-       fallback for an unusually long value, so a wrapped line grows the pill
-       instead of getting clipped by a fixed height. */
+  }
+
+  .last-updated {
     height: auto;
     min-height: var(--toolbar-height);
     white-space: normal;
     overflow-wrap: break-word;
-    max-width: 100px;
+    max-width: 80px;
   }
 
   .banner-stack {
