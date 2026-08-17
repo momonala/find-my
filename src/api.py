@@ -43,6 +43,7 @@ from src.db import list_alerts
 from src.db import remove_alert
 from src.db import set_device_icon
 from src.env import API_WRITE_TOKEN
+from src.env import MAPTILER_API_KEY
 from src.env import TELEGRAM_API_TOKEN
 from src.env import TELEGRAM_CHAT_ID
 from src.poller import start_background_poller
@@ -219,6 +220,7 @@ def create_app(start_poller: bool = True) -> Flask:
                 "home_latitude": HOME_LATITUDE,
                 "home_longitude": HOME_LONGITUDE,
                 "telegram_configured": bool(TELEGRAM_API_TOKEN and TELEGRAM_CHAT_ID),
+                "maptiler_key": MAPTILER_API_KEY,
             }
         )
 

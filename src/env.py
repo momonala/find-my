@@ -21,3 +21,8 @@ API_WRITE_TOKEN = os.environ.get("API_WRITE_TOKEN", "")
 # alerts via GET /alerts.
 TELEGRAM_API_TOKEN = os.environ.get("TELEGRAM_API_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+# Optional MapTiler key that unlocks extra, more-reliable tile options in the
+# dashboard's map style picker (see GET /config). Unset keeps the free
+# CARTO/OSM raster styles only.
+MAPTILER_API_KEY = os.environ.get("MAPTILER_API_KEY", "")

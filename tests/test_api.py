@@ -76,11 +76,13 @@ def test_dashboard_static_assets_are_served(client):
 def test_config_exposes_home_coordinates_and_telegram_status(client, monkeypatch):
     monkeypatch.setattr(api, "TELEGRAM_API_TOKEN", "")
     monkeypatch.setattr(api, "TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(api, "MAPTILER_API_KEY", "")
     body = client.get("/config").get_json()
     assert body == {
         "home_latitude": HOME_LATITUDE,
         "home_longitude": HOME_LONGITUDE,
         "telegram_configured": False,
+        "maptiler_key": "",
     }
 
 
