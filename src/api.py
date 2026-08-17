@@ -3,9 +3,9 @@
 Most routes only read `src.db` -- no request ever waits on a live Apple
 fetch, which is the whole point of polling in the background instead of
 fetching on demand. The exceptions are `PUT /locations/<id>/icon`, which
-stores a user-chosen marker emoji, and `POST /alerts` / `DELETE
-/alerts/<id>`, which manage user-configured movement/enter/exit alerts
-(evaluated by src/alerts.py from the poller, not from a request). See
+stores a user-chosen marker emoji, and `POST /alerts` / `PUT /alerts/<id>` /
+`DELETE /alerts/<id>`, which manage user-configured movement/enter/exit
+alerts (evaluated by src/alerts.py from the poller, not from a request). See
 src/poller.py for how the data gets there and `uv run findmy serve --help`
 for how to run this.
 
@@ -42,6 +42,7 @@ from src.db import latest_location_for
 from src.db import list_alerts
 from src.db import remove_alert
 from src.db import set_device_icon
+from src.db import update_alert
 from src.env import API_WRITE_TOKEN
 from src.env import MAPTILER_API_KEY
 from src.env import TELEGRAM_API_TOKEN
@@ -138,24 +139,14 @@ def _serialize_alert(row: sqlite3.Row) -> dict[str, Any]:
 _VALID_ANCHORS = {"home", "current"}
 
 
-def _parse_alert_payload() -> tuple[str, str, float, str]:
-    """Return (device_id, alert_type, threshold_m, anchor) from the request body, aborting 400 on junk.
+def _parse_alert_fields(payload: dict[str, Any]) -> tuple[str, float, str]:
+    """Shared alert_type/threshold_m/anchor validation for create and update payloads, aborting 400 on junk.
 
     `anchor` is only meaningful for `enter`/`exit` alerts -- `"home"` (the
     default) measures from the configured home coordinates, `"current"` tells
-    the caller (post_alert) to snapshot the device's current location as a
-    fixed anchor point instead. Ignored for `movement` alerts.
+    the caller to snapshot the device's current location as a fixed anchor
+    point instead. Ignored for `movement` alerts.
     """
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(
-            400, description="Body must be a JSON object with 'device_id', 'alert_type', and 'threshold_m'."
-        )
-
-    device_id = payload.get("device_id")
-    if not isinstance(device_id, str) or not device_id:
-        abort(400, description="'device_id' must be a non-empty string.")
-
     alert_type = payload.get("alert_type")
     if alert_type not in _VALID_ALERT_TYPES:
         abort(400, description=f"'alert_type' must be one of: {', '.join(sorted(_VALID_ALERT_TYPES))}.")
@@ -170,7 +161,35 @@ def _parse_alert_payload() -> tuple[str, str, float, str]:
     if anchor not in _VALID_ANCHORS:
         abort(400, description=f"'anchor' must be one of: {', '.join(sorted(_VALID_ANCHORS))}.")
 
-    return device_id, alert_type, float(threshold_m), anchor
+    return alert_type, float(threshold_m), anchor
+
+
+def _parse_alert_payload() -> tuple[str, str, float, str]:
+    """Return (device_id, alert_type, threshold_m, anchor) from the request body, aborting 400 on junk."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        abort(
+            400, description="Body must be a JSON object with 'device_id', 'alert_type', and 'threshold_m'."
+        )
+
+    device_id = payload.get("device_id")
+    if not isinstance(device_id, str) or not device_id:
+        abort(400, description="'device_id' must be a non-empty string.")
+
+    alert_type, threshold_m, anchor = _parse_alert_fields(payload)
+    return device_id, alert_type, threshold_m, anchor
+
+
+def _parse_alert_update_payload() -> tuple[str, float, str]:
+    """Return (alert_type, threshold_m, anchor) from the request body, aborting 400 on junk.
+
+    No `device_id` here -- an alert's device is fixed at creation, so editing
+    only ever touches type/threshold/anchor.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        abort(400, description="Body must be a JSON object with 'alert_type' and 'threshold_m'.")
+    return _parse_alert_fields(payload)
 
 
 def _require_write_token() -> None:
@@ -297,6 +316,31 @@ def create_app(start_poller: bool = True) -> Flask:
             row = get_alert(conn, alert_id)
             assert row is not None
         return jsonify(_serialize_alert(row)), 201
+
+    @app.put("/alerts/<int:alert_id>")
+    def put_alert(alert_id: int) -> ResponseReturnValue:
+        _require_write_token()
+        alert_type, threshold_m, anchor = _parse_alert_update_payload()
+        with connection() as conn:
+            existing = get_alert(conn, alert_id)
+            if existing is None:
+                abort(404)
+
+            anchor_lat = anchor_lon = None
+            if anchor == "current":
+                location = latest_location_for(conn, existing["device_id"])
+                if location is None or location["latitude"] is None:
+                    abort(400, description="Cannot anchor to current location: device has no fix yet.")
+                anchor_lat, anchor_lon = location["latitude"], location["longitude"]
+
+            updated = update_alert(
+                conn, alert_id, alert_type, threshold_m, anchor_lat=anchor_lat, anchor_lon=anchor_lon
+            )
+            if not updated:
+                abort(404)
+            row = get_alert(conn, alert_id)
+            assert row is not None
+        return jsonify(_serialize_alert(row))
 
     @app.delete("/alerts/<int:alert_id>")
     def delete_alert(alert_id: int) -> ResponseReturnValue:

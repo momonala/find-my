@@ -309,6 +309,28 @@ def create_alert(
     return cast("int", cursor.lastrowid)
 
 
+def update_alert(
+    conn: sqlite3.Connection,
+    alert_id: int,
+    alert_type: str,
+    threshold_m: float,
+    *,
+    anchor_lat: float | None = None,
+    anchor_lon: float | None = None,
+) -> bool:
+    """Update an existing alert's type/threshold/anchor. Returns False if `alert_id` is unknown.
+
+    `device_id` isn't editable here -- an alert's device is fixed at
+    creation (see src/api.py's `_parse_alert_update_payload`).
+    """
+    with conn:
+        cursor = conn.execute(
+            "UPDATE alerts SET alert_type = ?, threshold_m = ?, anchor_lat = ?, anchor_lon = ? WHERE id = ?",
+            (alert_type, threshold_m, anchor_lat, anchor_lon, alert_id),
+        )
+    return cursor.rowcount > 0
+
+
 def list_alerts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Every configured alert, across all devices, newest first."""
     return conn.execute(f"{_ALERT_WITH_DEVICE} ORDER BY a.created_at DESC").fetchall()

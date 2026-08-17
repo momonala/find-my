@@ -330,6 +330,87 @@ def test_post_alert_rejects_missing_body(client, seed):
     assert client.post("/alerts").status_code == 400
 
 
+def test_put_alert_updates_it(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+    created = client.post(
+        "/alerts", json={"device_id": "tag-1", "alert_type": "movement", "threshold_m": 100}
+    )
+    alert_id = created.get_json()["id"]
+
+    response = client.put(f"/alerts/{alert_id}", json={"alert_type": "exit", "threshold_m": 250})
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["id"] == alert_id
+    assert body["device_id"] == "tag-1"
+    assert body["alert_type"] == "exit"
+    assert body["threshold_m"] == 250
+    assert body["anchor_lat"] is None
+    assert body["anchor_lon"] is None
+
+
+def test_put_alert_with_current_anchor_snapshots_the_devices_location(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+    created = client.post("/alerts", json={"device_id": "tag-1", "alert_type": "enter", "threshold_m": 100})
+    alert_id = created.get_json()["id"]
+
+    response = client.put(
+        f"/alerts/{alert_id}", json={"alert_type": "enter", "threshold_m": 100, "anchor": "current"}
+    )
+
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["anchor_lat"] == 52.5
+    assert body["anchor_lon"] == 13.4
+
+
+def test_put_alert_with_current_anchor_and_no_fix_yet_is_400(client, seed):
+    seed(make_item("tag-1"))  # device known, no fix yet
+    created = client.post("/alerts", json={"device_id": "tag-1", "alert_type": "enter", "threshold_m": 100})
+    alert_id = created.get_json()["id"]
+
+    response = client.put(
+        f"/alerts/{alert_id}", json={"alert_type": "enter", "threshold_m": 100, "anchor": "current"}
+    )
+
+    assert response.status_code == 400
+
+
+def test_put_unknown_alert_is_404(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+
+    response = client.put("/alerts/999", json={"alert_type": "movement", "threshold_m": 100})
+
+    assert response.status_code == 404
+
+
+def test_put_alert_rejects_invalid_alert_type(client, seed):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+    created = client.post(
+        "/alerts", json={"device_id": "tag-1", "alert_type": "movement", "threshold_m": 100}
+    )
+    alert_id = created.get_json()["id"]
+
+    response = client.put(f"/alerts/{alert_id}", json={"alert_type": "bogus", "threshold_m": 100})
+
+    assert response.status_code == 400
+
+
+def test_put_alert_requires_token_when_configured(client, seed, monkeypatch):
+    seed(make_item("tag-1", make_location(52.5, 13.4)))
+    created = client.post(
+        "/alerts", json={"device_id": "tag-1", "alert_type": "movement", "threshold_m": 100}
+    )
+    alert_id = created.get_json()["id"]
+    monkeypatch.setattr(api, "API_WRITE_TOKEN", "s3cret")
+    payload = {"alert_type": "movement", "threshold_m": 100}
+
+    assert client.put(f"/alerts/{alert_id}", json=payload).status_code == 401
+
+    response = client.put(f"/alerts/{alert_id}", json=payload, headers={"X-Api-Token": "s3cret"})
+    assert response.status_code == 200
+
+
 def test_delete_alert_removes_it(client, seed):
     seed(make_item("tag-1", make_location(52.5, 13.4)))
     created = client.post(
