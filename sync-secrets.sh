@@ -9,13 +9,13 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 REMOTE_HOST="pi-cloud"
-REMOTE_DIR="/home/mnalavadi/findmy"
+REMOTE_DIR="/home/mnalavadi/find-my"
 
 cd "$(dirname "$0")"
 
 echo -e "${CYAN}==>${NC} Checking connectivity to ${YELLOW}${REMOTE_HOST}${NC}"
 if ! ssh "$REMOTE_HOST" "mkdir -p '${REMOTE_DIR}'"; then
-    echo -e "${RED}✗ Could not reach ${REMOTE_HOST} or create ${REMOTE_DIR}${NC}"
+    echo -e "${RED}??? Could not reach ${REMOTE_HOST} or create ${REMOTE_DIR}${NC}"
     exit 1
 fi
 
@@ -25,7 +25,7 @@ sync_path() {
     local src="$1"
     local dest_dir="$2"
     if [ ! -e "$src" ]; then
-        echo -e "${YELLOW}⚠ skipping ${src} (not found locally)${NC}"
+        echo -e "${YELLOW}??? skipping ${src} (not found locally)${NC}"
         return
     fi
     echo -e "${CYAN}==>${NC} Syncing ${YELLOW}${src}${NC} -> ${YELLOW}${REMOTE_HOST}:${REMOTE_DIR}/${dest_dir}${NC}"
@@ -37,4 +37,4 @@ sync_path "data/findmy.db" "data/"
 sync_path ".icloud_session/" ".icloud_session/"
 sync_path ".env" ""
 
-echo -e "${GREEN}✅ Secrets synced to ${REMOTE_HOST}:${REMOTE_DIR}${NC}"
+echo -e "${GREEN}??? Secrets synced to ${REMOTE_HOST}:${REMOTE_DIR}${NC}"
