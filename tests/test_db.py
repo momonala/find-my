@@ -20,6 +20,7 @@ from src.db import record_fetch
 from src.db import remove_alert
 from src.db import set_alert_active
 from src.db import set_device_icon
+from src.db import update_alert
 from tests.conftest import make_item
 from tests.conftest import make_location
 from tests.conftest import minutes_later
@@ -137,6 +138,24 @@ def test_create_alert_stores_a_custom_anchor(conn):
     row = get_alert(conn, alert_id)
     assert row["anchor_lat"] == 52.5
     assert row["anchor_lon"] == 13.4
+
+
+def test_update_alert_changes_type_threshold_and_anchor(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+    alert_id = create_alert(conn, "tag-1", "movement", 150)
+
+    assert update_alert(conn, alert_id, "exit", 250, anchor_lat=52.5, anchor_lon=13.4) is True
+
+    row = get_alert(conn, alert_id)
+    assert row["device_id"] == "tag-1"
+    assert row["alert_type"] == "exit"
+    assert row["threshold_m"] == 250
+    assert row["anchor_lat"] == 52.5
+    assert row["anchor_lon"] == 13.4
+
+
+def test_update_unknown_alert_returns_false(conn):
+    assert update_alert(conn, 999, "movement", 100) is False
 
 
 def test_alerts_for_device_is_empty_for_a_device_with_no_alerts(conn):

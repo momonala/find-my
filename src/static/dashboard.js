@@ -846,6 +846,7 @@
     const li = document.createElement("li");
     li.className = "device-row alert-list-row";
     li.dataset.deviceId = String(alert.device_id);
+    li.dataset.alertId = String(alert.id);
     li.style.setProperty("--row-accent", colorForDevice(alert.device_id));
 
     const avatar = document.createElement("span");
@@ -895,7 +896,12 @@
   let alertDialogThresholdUnit = null;
   let alertDialogAnchorLabel = null;
   let alertDialogAnchorSelect = null;
+  let alertDialogSubmitButton = null;
   let alertDialogTrigger = null;
+  // Set to the alert's id while editing an existing alert, null while adding
+  // a new one -- the one dialog/form is reused for both (mirrors the create
+  // vs update branch in the submit handler below).
+  let alertDialogEditingId = null;
 
   // Only enter/exit alerts have an anchor point -- movement alerts measure
   // between consecutive fixes, not from a fixed point, so the field is
@@ -976,11 +982,11 @@
     cancelButton.className = "btn-ghost";
     cancelButton.textContent = "Cancel";
     cancelButton.addEventListener("click", () => dialog.close());
-    const addButton = document.createElement("button");
-    addButton.type = "submit";
-    addButton.className = "btn-floating";
-    addButton.textContent = "Add";
-    actions.append(cancelButton, addButton);
+    const submitButton = document.createElement("button");
+    submitButton.type = "submit";
+    submitButton.className = "btn-floating";
+    submitButton.textContent = "Add";
+    actions.append(cancelButton, submitButton);
 
     form.append(deviceLabel, typeLabel, anchorLabel, thresholdLabel, actions);
     dialog.append(form);
@@ -996,7 +1002,11 @@
       if (!Number.isFinite(thresholdM) || thresholdM <= 0) return;
       dialog.close();
       const anchor = RADIUS_ALERT_TYPES.has(typeSelect.value) ? anchorSelect.value : "home";
-      createAlertRequest(deviceId, typeSelect.value, thresholdM, anchor);
+      if (alertDialogEditingId != null) {
+        updateAlertRequest(alertDialogEditingId, typeSelect.value, thresholdM, anchor);
+      } else {
+        createAlertRequest(deviceId, typeSelect.value, thresholdM, anchor);
+      }
     });
 
     dialog.addEventListener("close", () => {
@@ -1009,14 +1019,20 @@
     alertDialogThresholdUnit = thresholdUnit;
     alertDialogAnchorLabel = anchorLabel;
     alertDialogAnchorSelect = anchorSelect;
+    alertDialogSubmitButton = submitButton;
     return dialog;
   }
 
-  function openAlertDialog(triggerElement, preselectDeviceId) {
+  // `existingAlert` is omitted when adding a new alert, and passed when
+  // double-clicking an alert row to edit it -- the device is fixed for an
+  // edit (the API only lets you change type/threshold/anchor), so its
+  // dropdown is preselected and disabled rather than left editable.
+  function openAlertDialog(triggerElement, preselectDeviceId, existingAlert) {
     if (state.devices.length === 0) return;
 
     alertDialog ??= buildAlertDialog();
     alertDialogTrigger = triggerElement;
+    alertDialogEditingId = existingAlert ? existingAlert.id : null;
 
     alertDialogDeviceSelect.textContent = "";
     for (const device of state.devices) {
@@ -1025,11 +1041,22 @@
       option.textContent = `${device.icon || "❓"} ${device.name}`;
       alertDialogDeviceSelect.append(option);
     }
-    if (preselectDeviceId != null) alertDialogDeviceSelect.value = String(preselectDeviceId);
 
-    alertDialogTypeSelect.value = "movement";
-    alertDialogThresholdInput.value = "100";
-    alertDialogAnchorSelect.value = "home";
+    if (existingAlert) {
+      alertDialogDeviceSelect.value = String(existingAlert.device_id);
+      alertDialogDeviceSelect.disabled = true;
+      alertDialogTypeSelect.value = existingAlert.alert_type;
+      alertDialogThresholdInput.value = String(Math.round(existingAlert.threshold_m));
+      alertDialogAnchorSelect.value = existingAlert.anchor_lat != null ? "current" : "home";
+      alertDialogSubmitButton.textContent = "Save";
+    } else {
+      alertDialogDeviceSelect.disabled = false;
+      if (preselectDeviceId != null) alertDialogDeviceSelect.value = String(preselectDeviceId);
+      alertDialogTypeSelect.value = "movement";
+      alertDialogThresholdInput.value = "100";
+      alertDialogAnchorSelect.value = "home";
+      alertDialogSubmitButton.textContent = "Add";
+    }
     updateAlertDialogFieldsForType();
 
     alertDialog.showModal();
@@ -1053,6 +1080,21 @@
           threshold_m: thresholdM,
           anchor,
         }),
+      });
+      await loadAlerts();
+      renderDeviceList();
+      reloadTracks();
+    } catch (error) {
+      handleFatalError(error);
+    }
+  }
+
+  async function updateAlertRequest(alertId, alertType, thresholdM, anchor = "home") {
+    try {
+      await fetchJson(`/alerts/${alertId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alert_type: alertType, threshold_m: thresholdM, anchor }),
       });
       await loadAlerts();
       renderDeviceList();
@@ -1094,6 +1136,62 @@
     reloadTracks();
   }
 
+  // Detected by hand rather than via a native "dblclick" listener: the row's
+  // own click handler below calls renderDeviceList(), which tears down and
+  // rebuilds every <li> on the first click, so the second click always lands
+  // on a fresh element. Browsers key native double-click detection off the
+  // clicked element staying the same node, so a real "dblclick" never fires
+  // here -- track the alert id + timestamp across clicks instead.
+  let lastAlertRowClick = null;
+
+  // On touch, double-click can't work at all: the first tap runs isolateDevice()
+  // below, which closes the mobile drawer (see isolateDevice's MOBILE_QUERY
+  // check) before a second tap could ever land on the row. Press-and-hold is
+  // the touch-native substitute -- it fires from the first and only touch, so
+  // there's no dependency on the row still being open for a second tap.
+  const ALERT_LONG_PRESS_MS = 500;
+  const ALERT_LONG_PRESS_MOVE_TOLERANCE = 10;
+  let alertLongPressTimer = null;
+  let alertLongPressStart = null;
+  let alertLongPressRow = null;
+  let alertLongPressTriggered = false;
+
+  function cancelAlertLongPress() {
+    clearTimeout(alertLongPressTimer);
+    alertLongPressTimer = null;
+    alertLongPressStart = null;
+    if (alertLongPressRow) alertLongPressRow.classList.remove("is-pressing");
+    alertLongPressRow = null;
+  }
+
+  deviceListEl.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "touch") return;
+    const alertRow = event.target.closest(".alert-list-row");
+    if (!alertRow) return;
+    alertLongPressTriggered = false;
+    alertLongPressStart = { x: event.clientX, y: event.clientY };
+    alertLongPressRow = alertRow;
+    alertRow.classList.add("is-pressing");
+    clearTimeout(alertLongPressTimer);
+    alertLongPressTimer = setTimeout(() => {
+      alertLongPressTriggered = true;
+      cancelAlertLongPress();
+      const alertId = alertRow.dataset.alertId;
+      const alert = state.alerts.find((candidate) => String(candidate.id) === alertId);
+      if (alert) openAlertDialog(alertRow, alert.device_id, alert);
+    }, ALERT_LONG_PRESS_MS);
+  });
+
+  deviceListEl.addEventListener("pointermove", (event) => {
+    if (!alertLongPressStart) return;
+    const dx = event.clientX - alertLongPressStart.x;
+    const dy = event.clientY - alertLongPressStart.y;
+    if (Math.hypot(dx, dy) > ALERT_LONG_PRESS_MOVE_TOLERANCE) cancelAlertLongPress();
+  });
+
+  deviceListEl.addEventListener("pointerup", cancelAlertLongPress);
+  deviceListEl.addEventListener("pointercancel", cancelAlertLongPress);
+
   // Event delegation on shared ancestors instead of one listener per row/button.
   deviceListEl.addEventListener("click", (event) => {
     const isolateButton = event.target.closest('button[data-action="isolate"]');
@@ -1117,6 +1215,19 @@
     }
     const alertRow = event.target.closest(".alert-list-row");
     if (alertRow) {
+      if (alertLongPressTriggered) {
+        alertLongPressTriggered = false;
+        return;
+      }
+      const alertId = alertRow.dataset.alertId;
+      const now = Date.now();
+      if (lastAlertRowClick && lastAlertRowClick.alertId === alertId && now - lastAlertRowClick.time < 400) {
+        lastAlertRowClick = null;
+        const alert = state.alerts.find((candidate) => String(candidate.id) === alertId);
+        if (alert) openAlertDialog(alertRow, alert.device_id, alert);
+        return;
+      }
+      lastAlertRowClick = { alertId, time: now };
       // Stays on the Alerts tab (unlike the Devices/Items rows above) --
       // the map highlights the item's full history route and alert-radius
       // circles in place instead of jumping the sidebar away from Alerts.
@@ -1174,6 +1285,10 @@
     sidebarEl.classList.toggle("is-open", open);
     sidebarBackdropEl.classList.toggle("is-open", open);
     sidebarToggleEl.setAttribute("aria-expanded", String(open));
+    // The open drawer covers the toggle's own corner, so it'd otherwise float
+    // on top of the sidebar's tab-switcher. Hide it while open and rely on
+    // the backdrop tap to close instead.
+    sidebarToggleEl.classList.toggle("is-hidden", open);
   }
 
   sidebarToggleEl.addEventListener("click", () => {
