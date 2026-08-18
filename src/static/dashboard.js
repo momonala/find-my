@@ -605,6 +605,14 @@
     return meters === null ? "—" : formatDistance(meters);
   }
 
+  // AirTags/trackers only -- src/tracking.py's TrackedItem.battery_level is
+  // None for iCloud devices, so this dot never shows for the "device" tab.
+  const BATTERY_SLUG = { Full: "full", Medium: "medium", Low: "low", "Very Low": "very-low" };
+
+  function batterySlug(device) {
+    return BATTERY_SLUG[device.battery_level] || null;
+  }
+
   function buildDeviceRow(device) {
     const hasFix = isFiniteCoordinate(device.latitude) && isFiniteCoordinate(device.longitude);
 
@@ -643,13 +651,24 @@
     const name = document.createElement("span");
     name.className = "device-name";
     name.textContent = device.name;
+
     const subtitle = document.createElement("span");
     subtitle.className = "device-subtitle";
     const distance = distanceLabel(device);
-    subtitle.textContent =
-      distance === "—"
-        ? `${device.kind} · ${formatRelativeTime(device.seen_at)}`
-        : `${device.kind} · ${formatRelativeTime(device.seen_at)} · ${distance}`;
+    const parts = [device.kind, formatRelativeTime(device.seen_at)];
+    if (distance !== "—") parts.push(distance);
+    subtitle.append(parts.join(" · "));
+
+    const slug = batterySlug(device);
+    if (slug) {
+      subtitle.append(" · ");
+      const dot = document.createElement("span");
+      dot.className = `battery-dot battery-dot--${slug}`;
+      dot.title = `Battery: ${device.battery_level}`;
+      dot.setAttribute("aria-label", `Battery: ${device.battery_level}`);
+      subtitle.append(dot);
+    }
+
     text.append(name, subtitle);
 
     main.append(text);

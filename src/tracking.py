@@ -56,6 +56,11 @@ class TrackedItem:
     kind: str
     source: str
     location: Location | None
+    # One of "Full", "Medium", "Low", "Very Low", or None if unknown/unsupported.
+    # Only src/airtags.py populates this today -- it's decoded from the status
+    # byte Apple's crowdsourced network already reports. src/find_my.py's own
+    # iCloud devices leave it None.
+    battery_level: str | None = None
 
 
 class SortKey(str, enum.Enum):
@@ -139,6 +144,7 @@ def items_to_json(items: list[TrackedItem]) -> str:
             "name": item.name,
             "kind": item.kind,
             "source": item.source,
+            "battery_level": item.battery_level,
             "latitude": item.location.latitude if item.location else None,
             "longitude": item.location.longitude if item.location else None,
             "seen_at": item.location.seen_at.isoformat() if item.location else None,
@@ -155,6 +161,7 @@ def render_items(items: list[TrackedItem], title: str, elapsed_seconds: float) -
     table = Table(title=title, caption=f"{len(items)} items in {elapsed_seconds:.1f}s")
     table.add_column("Name")
     table.add_column("Kind")
+    table.add_column("Battery")
     table.add_column("Location")
     table.add_column("Distance", justify="right")
     table.add_column("Age", justify="right")
@@ -163,7 +170,9 @@ def render_items(items: list[TrackedItem], title: str, elapsed_seconds: float) -
     now = datetime.now(UTC)
     for item in items:
         if item.location is None:
-            table.add_row(item.name, item.kind, "unavailable", "-", "-", "-", style="dim")
+            table.add_row(
+                item.name, item.kind, item.battery_level or "-", "unavailable", "-", "-", "-", style="dim"
+            )
             continue
 
         location = item.location
@@ -171,6 +180,7 @@ def render_items(items: list[TrackedItem], title: str, elapsed_seconds: float) -
         table.add_row(
             item.name,
             item.kind,
+            item.battery_level or "-",
             f"{location.latitude:.6f}, {location.longitude:.6f}",
             f"{distance_from_home_m(location):,.0f} m",
             f"{age_minutes:,.0f} min ago",

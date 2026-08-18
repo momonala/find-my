@@ -12,6 +12,7 @@
   --color-danger-bg: rgba(42, 22, 22, 0.92);
   --color-warning: #f5c451;
   --color-warning-bg: rgba(43, 34, 12, 0.92);
+  --color-success: #4caf50;
 
   --radius: 8px;
   --radius-lg: 14px;
@@ -556,6 +557,45 @@ input:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* AirTags/trackers only -- src/tracking.py's TrackedItem.battery_level is
+   None for iCloud devices, so this dot never renders on the "device" tab.
+   Sits at the end of .device-subtitle's line, after kind/age/distance. */
+.battery-dot {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: var(--space-1);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.battery-dot--full {
+  background: var(--color-success);
+}
+
+.battery-dot--medium {
+  background: var(--color-warning);
+}
+
+.battery-dot--low {
+  background: var(--color-danger);
+}
+
+.battery-dot--very-low {
+  background: var(--color-danger);
+  animation: battery-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes battery-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
 }
 
 .device-subtitle {
