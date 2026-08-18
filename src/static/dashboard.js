@@ -20,7 +20,7 @@
   const FALLBACK_CENTER = [0, 0];
   const EARTH_RADIUS_M = 6371008.8;
   const STATUS_POLL_MS = 30_000;
-  const TAB_KEYS = ["device", "item", "alert"];
+  const TAB_KEYS = ["item", "device", "alert"];
   // Which device/item is auto-selected on first load, per tab -- lets the
   // dashboard open with a sensible default view instead of an empty map.
   const DEFAULT_SELECTED_NAME_BY_SOURCE = { item: "Ema" };
@@ -34,7 +34,7 @@
     colorByDeviceId: new Map(),
     selected: new Set(),
     sort: { key: "name", direction: "asc" },
-    activeTab: "device",
+    activeTab: "item",
     home: null,
     showHistory: true,
     alerts: [],
@@ -451,7 +451,7 @@
         if (isLatest && device) {
           const marker = L.marker([point.latitude, point.longitude], { icon: buildMarkerIcon(device) })
             .addTo(trackLayerGroup)
-            .bindTooltip(buildTooltipNode(deviceId, point.seen_at));
+            .bindTooltip(buildTooltipNode(deviceId, point.seen_at), { permanent: true, direction: "top" });
           marker.on("click", () => openAlertDialog(marker.getElement(), deviceId));
           return;
         }
