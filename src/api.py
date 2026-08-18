@@ -83,6 +83,7 @@ def _serialize_location(row: sqlite3.Row) -> dict[str, Any]:
         "kind": row["kind"],
         "source": row["source"],
         "icon": row["icon"] or _DEFAULT_ICONS.get(row["kind"]),
+        "battery_level": row["battery_level"],
         "latitude": latitude,
         "longitude": longitude,
         "seen_at": row["seen_at"],

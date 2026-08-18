@@ -62,7 +62,8 @@ SELECT device_id, latitude, longitude, seen_at FROM (
 # The projection both location reads share, so a new response column only has to
 # be added in one place. Callers append their own WHERE/ORDER BY.
 _DEVICE_WITH_LATEST_FIX = f"""
-SELECT d.id, d.name, d.kind, d.source, di.emoji AS icon, lh.latitude, lh.longitude, lh.seen_at
+SELECT d.id, d.name, d.kind, d.source, d.battery_level, di.emoji AS icon,
+       lh.latitude, lh.longitude, lh.seen_at
 FROM devices d
 LEFT JOIN device_icons di ON di.device_id = d.id
 LEFT JOIN ({_LATEST_PER_DEVICE}) lh ON lh.device_id = d.id
@@ -149,11 +150,13 @@ def record_fetch(conn: sqlite3.Connection, items: list[TrackedItem]) -> FetchRes
 
             conn.execute(
                 """
-                INSERT INTO devices (id, name, kind, source, updated_at) VALUES (?, ?, ?, ?, ?)
+                INSERT INTO devices (id, name, kind, source, battery_level, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
-                    source = excluded.source, updated_at = excluded.updated_at
+                    source = excluded.source, battery_level = excluded.battery_level,
+                    updated_at = excluded.updated_at
                 """,
-                (item.id, item.name, item.kind, item.source, now),
+                (item.id, item.name, item.kind, item.source, item.battery_level, now),
             )
 
             if item.location is None:

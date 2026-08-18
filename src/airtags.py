@@ -60,6 +60,20 @@ _UNSUPPORTED_PLATFORM_MSG = (
     "Run it on the Mac first, then copy .icloud_session/ and trackers.json here."
 )
 
+# Bits 6-7 of a LocationReport's status byte, per the Offline Finding BLE
+# advertisement format -- the same two bits findmy.scanner.scanner decodes for
+# a directly-scanned beacon. Apple's crowdsourced network already hands us
+# this byte in every report, so no local Bluetooth radio is needed to read it.
+_BATTERY_LEVELS = {0b00: "Full", 0b01: "Medium", 0b10: "Low", 0b11: "Very Low"}
+
+
+def _battery_level(report: LocationReport) -> str | None:
+    try:
+        status = report.status
+    except RuntimeError:
+        return None
+    return _BATTERY_LEVELS.get((status >> 6) & 0b11)
+
 
 def is_macos_14_plus() -> bool:
     if sys.platform != "darwin":
@@ -246,6 +260,7 @@ def fetch_airtags(refresh_keys: bool = False) -> list[TrackedItem]:
                 if report
                 else None
             ),
+            battery_level=_battery_level(report) if report else None,
         )
         for accessory, report in locations.items()
     ]

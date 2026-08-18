@@ -233,6 +233,8 @@ def test_init_db_runs_alembic_migrations_to_head(tmp_path):
     init_db(db_path)
 
     conn = get_connection(db_path)
-    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == "0003"
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == "0004"
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
     assert {"anchor_lat", "anchor_lon"} <= columns
+    device_columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)")}
+    assert "battery_level" in device_columns
