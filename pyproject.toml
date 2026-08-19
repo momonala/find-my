@@ -134,3 +134,6 @@ exclude_lines = [
 
 [tool.uv.sources]
 spyglass = { git = "https://github.com/momonala/spyglass.git", rev = "main" }
+
+[tool.uv]
+exclude-newer = "1 week"

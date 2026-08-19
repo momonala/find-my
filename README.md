@@ -1,7 +1,7 @@
-# test-find-my
+# find-my
 
-[![CI](https://github.com/momonala/test-find-my/actions/workflows/ci.yml/badge.svg)](https://github.com/momonala/test-find-my/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/momonala/test-find-my/branch/main/graph/badge.svg)](https://codecov.io/gh/momonala/test-find-my)
+[![CI](https://github.com/momonala/find-my/actions/workflows/ci.yml/badge.svg)](https://github.com/momonala/find-my/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/momonala/find-my/branch/main/graph/badge.svg)](https://codecov.io/gh/momonala/find-my)
 
 Command-line access to Apple's Find My data: locations for iCloud devices and for AirTags, with distance from a
 configured home point.
@@ -21,17 +21,9 @@ Last Updated: 2026-08-12
 
 ## Prerequisites
 
-- Python 3.13 — pinned in `pyproject.toml` as `>=3.13,<3.14`, see [Quirks](#quirks)
+- Python 3.13 — pinned in `pyproject.toml` as `>=3.13,<3.14` (`cryptography` has no 3.14 wheel yet)
 - [uv](https://github.com/astral-sh/uv) for dependency management
 - macOS, for the `airtags` command only — it reads keys from this Mac's local Find My data
-
-## Installation
-
-```bash
-uv sync
-cp .env.example .env
-# then edit .env with your Apple ID
-```
 
 ## Configuration
 
@@ -61,6 +53,14 @@ ICLOUD_PASSWORD='your-password'
 ```
 
 Quote the password — `python-dotenv` treats an unquoted `#` as a comment and silently truncates the value.
+
+## Installation
+
+```bash
+uv sync
+cp .env.example .env
+# then edit .env with your Apple ID
+```
 
 ## Running
 
@@ -116,16 +116,11 @@ Deployments running more than one web worker should pass `--no-poll` and run the
 process — `uv run findmy poll` — so exactly one process ever writes to the database; `install/` ships it as a
 separate systemd unit for that reason.
 
-`src/db.py` keeps five tables: `devices` (latest name/kind per device), `location_history` (one row per fix —
-only written when coordinates actually change from the last stored fix, so repeated identical reports from
-Apple's network don't grow the table), `device_icons` (the marker emoji set via the dashboard), `alerts`
-(user-configured movement/enter/exit alert definitions plus current `is_active` state, evaluated by
-`src/alerts.py` from the poller — `enter`/`exit` alerts measure from home by default, or from a fixed point
-snapshotted at creation time if the dashboard's "Measured from: Current location" option was used), and
-`alert_events` (one row per time an alert actually fired, kept separate from `alerts` so config/current-state
-and trigger history don't share a row — an alert's `triggered_at` in the API is computed as the latest matching
-`alert_events` row, not stored on `alerts` itself). Schema itself is owned by
-[Alembic](#schema-migrations), not `db.py` directly.
+`src/db.py` keeps five tables: `devices` (latest name/kind), `location_history` (one row per fix, written only
+on coordinate change so repeated identical reports don't grow the table), `device_icons` (dashboard marker
+emoji), `alerts` (movement/enter/exit definitions plus `is_active` state, evaluated by `src/alerts.py`), and
+`alert_events` (one row per actual firing, kept separate so config and trigger history don't share a row).
+Schema itself is owned by [Alembic](#schema-migrations), not `db.py` directly.
 
 | Route | Returns |
 |-------|---------|
@@ -137,8 +132,11 @@ and trigger history don't share a row — an alert's `triggered_at` in the API i
 | `GET /locations/<id>` | Latest known fix for one device (404 if `id` is unknown) |
 | `GET /locations/<id>/history` | That device's fixes, newest first; `?since=<ISO8601>` and `?limit=<N>` filter it |
 | `PUT /locations/<id>/icon` | Sets (`{"emoji": "🚲"}`) or clears (`{"emoji": null}`) a device's marker emoji |
+| `GET /alerts` | List configured movement/enter/exit alerts (see [Observability](#observability) for how they fire) |
+| `POST /alerts` | Create an alert: `{"device_id", "alert_type": "movement"\|"enter"\|"exit", "threshold_m", "anchor": "home"\|"current"}` |
+| `PUT /alerts/<id>` | Update an existing alert's type/threshold/anchor |
 
-The write route is open by default, which is fine for the localhost interface `serve` binds to. Set
+The write routes are open by default, which is fine for the localhost interface `serve` binds to. Set
 `API_WRITE_TOKEN` in `.env` before exposing the dashboard on a network or through a tunnel — writes then
 require an `X-Api-Token` header matching it; reads stay open either way.
 
@@ -146,13 +144,11 @@ Devices are identified by Apple's own stable ID — `device.data["id"]` for iClo
 (or a hash of its master key, for third-party tags where Apple leaves that field empty) for trackers — so an
 `id` survives a rename in the Find My app.
 
-`GET /dashboard` serves `src/templates/dashboard.html` plus `src/static/dashboard.{css,js}`: a device list
-(checkbox to show/hide, "Only" to isolate one, a color swatch shared with its plotted track) next to a
-[Leaflet](https://leafletjs.com/)/OpenStreetMap map plotting whichever devices are checked, with a time-range
-filter (last hour / 6 hours / 24 hours / 7 days / all time) so a long-running poller's history doesn't
-overwhelm the map. It's a plain client-side page calling the JSON routes above — no build step, no framework —
-but it does load Leaflet from unpkg and map tiles from CARTO, so it needs internet access and won't work fully
-offline.
+`GET /dashboard` (`src/templates/dashboard.html` + `src/static/dashboard.{css,js}`) is a plain client-side page
+calling the JSON routes above — no build step, no framework. A device list (checkbox to show/hide, "Only" to
+isolate one) sits next to a [Leaflet](https://leafletjs.com/)/OpenStreetMap map with a time-range filter (1h /
+6h / 24h / 7d / all) so a long-running poller's history doesn't overwhelm it. It loads Leaflet and map tiles
+from CDNs, so it needs internet access.
 
 ```mermaid
 flowchart LR
@@ -163,11 +159,10 @@ flowchart LR
     BROWSER[Dashboard] -->|fetch| API
 ```
 
-Because the poller reuses whatever's cached in `.icloud_session/`, first run `uv run findmy airtags` (and/or
-`devices`) at the console to get past the one-time 2FA/Keychain prompts — `serve` itself never triggers them
-and will just come up with an empty dashboard until that cache exists. If a session expires later, the poller
-logs a warning each cycle and backs off (up to 15 minutes between attempts) rather than retrying at full
-speed forever; re-run the same console command to refresh it.
+`serve` itself never triggers the one-time 2FA/Keychain prompt (see [Running](#running)) — run `uv run findmy
+airtags`/`devices` at the console first, or the dashboard comes up empty until that cache exists. If a session
+expires later, the poller logs a warning each cycle and backs off (up to 15 minutes) rather than retrying at
+full speed; re-run the same console command to refresh it.
 
 ### Schema migrations
 
@@ -201,6 +196,33 @@ Metrics emitted (stat names auto-prefixed `find-my.{function}.*`):
 | `check_alerts.movement_triggered` | `alerts.py` | A device moved past its configured threshold (cooldown-gated) |
 | `check_alerts.enter_triggered` / `exit_triggered` | `alerts.py` | A device crossed into/out of a radius (edge-triggered, cooldown-gated) |
 | `_notify.telegram_failed` | `alerts.py` | An in-app alert fired but the Telegram push failed |
+
+## Project Structure
+
+```
+find-my/
+├── src/
+│   ├── cli.py                    # `findmy` entry point: commands, sorting, output
+│   ├── find_my.py                # iCloud devices via pyicloud → fetch_devices()
+│   ├── airtags.py                # trackers via findmy         → fetch_airtags()
+│   ├── batch_reports.py          # batched Apple report fetching, used by airtags.py
+│   ├── tracking.py               # shared model, distance, sorting, table renderer
+│   ├── errors.py                 # domain exceptions raised by the fetch layer
+│   ├── poller.py                 # background fetch loop for `findmy serve`/`findmy poll`
+│   ├── db.py                     # SQLite queries backing the API; schema lives in migrations/
+│   ├── alerts.py                 # movement/enter/exit alert evaluation, called from poller.py
+│   ├── api.py                    # Flask app: JSON routes + /dashboard
+│   ├── templates/dashboard.html
+│   ├── static/dashboard.{css,js}
+│   ├── config.py                 # non-secret config from pyproject.toml → `config` CLI
+│   ├── env.py                    # secrets from .env
+│   └── telemetry.py              # Spyglass wiring: logging + metrics, see Observability
+├── tests/
+├── migrations/               # Alembic schema migrations for data/findmy.db, see Schema migrations
+├── alembic.ini
+├── pyproject.toml            # dependencies, [tool.config], CLI entry points
+└── install/, deploy.py       # systemd units and the pi-cloud deploy CLI
+```
 
 ## Architecture
 
@@ -256,21 +278,20 @@ indefinitely. It stays inside the git-ignored session directory at mode 600; del
 
 ### Moving to another Mac
 
-Tracker keys are fixed at pairing, not tied to a specific Mac, so `.icloud_session/trackers.json` can be copied to a
-new machine and keeps working. This matters more than it sounds: a Mac that never paired these trackers itself has no
-`OwnedBeacons/` records for them, so without this file `--refresh-keys` on the new machine would come back empty.
+Tracker keys are fixed at pairing, not tied to a specific Mac, so copying `.icloud_session/` (whole directory —
+`trackers.json`, `findmy_account.json`, `ani_libs.bin`, and the `pyicloud` cookiejar) to a new machine keeps it
+working without re-pairing:
 
 ```bash
-scp -r .icloud_session/ new-mac:/path/to/test-find-my/.icloud_session/
+scp -r .icloud_session/ new-mac:/path/to/find-my/.icloud_session/
 chmod 600 .icloud_session/trackers.json   # scp doesn't always preserve mode 600
 uv run findmy airtags
 ```
 
-That copies the whole session — `trackers.json` (tracker keys), `findmy_account.json` + `ani_libs.bin` (the `findmy`
-Apple-account session and its Anisette provisioning state), and the `pyicloud` session/cookiejar. If the account
-session is rejected on the new Mac and it demands 2FA, delete only `findmy_account.json` and `ani_libs.bin` and let it
-re-authenticate — keep `trackers.json`, since it's independent of the login session and is the one file the new Mac
-cannot regenerate on its own.
+A Mac that never paired these trackers has no local `OwnedBeacons/` record for them, so without this file
+`--refresh-keys` on the new machine comes back empty. If the account session is rejected and demands 2FA,
+delete only `findmy_account.json` and `ani_libs.bin` and re-authenticate — keep `trackers.json`, which the new
+Mac cannot regenerate on its own.
 
 ### Batched report fetching
 
@@ -284,8 +305,9 @@ That reaches past `findmy`'s public API into `fetch_raw_reports`, `LocationRepor
 `FindMyAccessory.update_alignment`, so `findmy` is pinned to an exact version and `tests/test_batch_reports.py` checks
 the chunking and attribution logic against stubs.
 
-Concurrency does not help here (see [Quirks](#quirks)), so the remaining cost — about 5.4s of the 9.1s — is
-single-threaded rolling-key derivation, not network time.
+Concurrency does not help here — every request needs fresh Anisette headers from an emulated ARM library that is
+effectively single-threaded, so parallel lookups degrade rather than speed up. The remaining cost — about 5.4s of
+the 9.1s — is single-threaded rolling-key derivation, not network time.
 
 ### Why two libraries
 
@@ -294,59 +316,6 @@ crowdsourced reports encrypted to each tracker's public key. Decrypting those ne
 which lives in `~/Library/com.apple.icloud.searchpartyd/OwnedBeacons/` on a Mac that paired it, so `findmy` handles
 that path. Note the `pyicloud` package on PyPI is the actively maintained [timlaing
 fork](https://github.com/timlaing/pyicloud); the original `picklepete/pyicloud` last saw a commit in October 2024.
-
-## Project Structure
-
-```
-test-find-my/
-├── src/
-│   ├── cli.py                    # `findmy` entry point: commands, sorting, output
-│   ├── find_my.py                # iCloud devices via pyicloud → fetch_devices()
-│   ├── airtags.py                # trackers via findmy         → fetch_airtags()
-│   ├── batch_reports.py          # batched Apple report fetching, used by airtags.py
-│   ├── tracking.py               # shared model, distance, sorting, table renderer
-│   ├── errors.py                 # domain exceptions raised by the fetch layer
-│   ├── poller.py                 # background fetch loop for `findmy serve`/`findmy poll`
-│   ├── db.py                     # SQLite queries backing the API; schema lives in migrations/
-│   ├── alerts.py                 # movement/enter/exit alert evaluation, called from poller.py
-│   ├── api.py                    # Flask app: JSON routes + /dashboard
-│   ├── templates/dashboard.html
-│   ├── static/dashboard.{css,js}
-│   ├── config.py                 # non-secret config from pyproject.toml → `config` CLI
-│   ├── env.py                    # secrets from .env
-│   └── telemetry.py              # Spyglass wiring: logging + metrics, see Observability
-├── tests/
-├── migrations/               # Alembic schema migrations for data/findmy.db, see Schema migrations
-├── alembic.ini
-├── pyproject.toml            # dependencies, [tool.config], CLI entry points
-└── install/, deploy.py       # systemd units and the pi-cloud deploy CLI
-```
-
-## Quirks
-
-**Python 3.14 breaks `uv sync`.** `cryptography` has no 3.14 wheel yet, so the install falls back to a Rust build that
-fails. Hence the `<3.14` bound in `requires-python`; relax it once wheels ship.
-
-**`airtags` needs the Mac's console the first time.** Reading tracker keys raises a GUI Keychain prompt (`security
-find-generic-password -l BeaconStore`), which can't be answered over SSH, and only sees trackers paired on that Mac.
-Cached keys remove the Keychain dependency on later runs — see [Key caching](#key-caching) and [Moving to another
-Mac](#moving-to-another-mac).
-
-**Parallelising `airtags` makes it slower, not faster.** Every request needs fresh Anisette headers from an emulated
-ARM library that is effectively single-threaded: uncontended it's ~40ms, but with 5 concurrent lookups it degrades to
-~10,000ms each. `src/batch_reports.py` gets the real win instead by cutting the *number* of requests — see [Batched
-report fetching](#batched-report-fetching).
-
-**Apple devices are filtered out of `airtags`.** They appear in the local key store too, but `find_my.py` already
-covers them via a faster API; the filter keys off model format (`iPhone14,5` vs. `AirTag (2nd generation)`). Use
-`findmy all` for both sets together.
-
-**Some trackers report `unknown` as their kind** — their local record has no model name, which is normal for older or
-third-party tags.
-
-**`pyicloud` and `findmy` hold separate Apple sessions** and authenticate differently, so each prompts for its own
-2FA on first run and caches its own state in `.icloud_session/`. `findmy`'s login is the stricter of the two — if it
-rejects a password `pyicloud` accepts, check `.env` quoting first.
 
 ## Development
 

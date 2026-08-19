@@ -102,3 +102,4 @@ data/
 
 # `script(1)` session captures
 typescript
+.claude/
