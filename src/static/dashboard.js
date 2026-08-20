@@ -48,6 +48,9 @@
   let map = null;
   let trackLayerGroup = null;
   let trackAbortController = null;
+  // Markers carrying the permanent "current position" tooltip, so a map
+  // click can close them all (see initMap's map.on("click", ...)).
+  let latestPositionMarkers = [];
   // The device ids actually drawn last time, so a same-selection refresh
   // doesn't re-fit the map and discard wherever the user just panned/zoomed to.
   let lastFitDeviceIds = null;
@@ -112,12 +115,14 @@
 
     const seconds = (Date.now() - timestamp) / 1000;
     if (seconds < 60) return "just now";
-    const minutes = Math.round(seconds / 60);
-    if (minutes < 60) return `${minutes} min ago`;
-    const hours = Math.round(minutes / 60);
-    if (hours < 24) return `${hours} h ago`;
-    const days = Math.round(hours / 24);
-    return `${days} d ago`;
+    const totalMinutes = Math.round(seconds / 60);
+    if (totalMinutes < 60) return `${totalMinutes}m ago`;
+    const totalHours = Math.floor(totalMinutes / 60);
+    const remainderMinutes = totalMinutes % 60;
+    if (totalHours < 24) return `${totalHours}h ${remainderMinutes}m ago`;
+    const days = Math.floor(totalHours / 24);
+    const remainderHours = totalHours % 24;
+    return `${days}d ${remainderHours}h ago`;
   }
 
   function haversineMeters(lat1, lon1, lat2, lon2) {
@@ -177,13 +182,23 @@
     return L.divIcon({ className: "device-marker", html: badge, iconSize: [28, 28], iconAnchor: [14, 14] });
   }
 
+  function formatSeenAt(isoString) {
+    const date = new Date(isoString);
+    const day = date.getDate();
+    const month = date.toLocaleString(undefined, { month: "short" });
+    const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    const yearSuffix =
+      date.getFullYear() === new Date().getFullYear() ? "" : ` '${String(date.getFullYear()).slice(-2)}`;
+    return `${day} ${month}${yearSuffix} · ${time}`;
+  }
+
   function buildTooltipNode(deviceId, seenAt) {
     // Built as a real element rather than an HTML string: Leaflet's tooltip
     // assigns string content via innerHTML, and device names are user-supplied
     // (set in the Find My app on a phone), so a string here would be an XSS
     // sink. An Element is inserted as a node instead.
     const node = document.createElement("span");
-    node.textContent = `${deviceNameFor(deviceId)} — ${new Date(seenAt).toLocaleString()}`;
+    node.textContent = `${deviceNameFor(deviceId)} · ${formatSeenAt(seenAt)} (${formatRelativeTime(seenAt)})`;
     return node;
   }
 
@@ -243,6 +258,12 @@
     L.control.zoom({ position: "bottomright" }).addTo(map);
     applyMapStyle(loadMapStyleKey());
     trackLayerGroup = L.layerGroup().addTo(map);
+    // Clicking the map (not a marker) dismisses the default-shown current-
+    // position tooltips; they come back on the next render (poll refresh or
+    // selection change), which re-binds them permanent again.
+    map.on("click", () => {
+      latestPositionMarkers.forEach((marker) => marker.closeTooltip());
+    });
   }
 
   // --- Map style picker ------------------------------------------------------
@@ -415,6 +436,7 @@
 
   function renderTracks(tracksByDevice) {
     trackLayerGroup.clearLayers();
+    latestPositionMarkers = [];
 
     const allPoints = [...tracksByDevice.values()].flat();
     trackEmptyEl.hidden = allPoints.length > 0;
@@ -452,7 +474,11 @@
           const marker = L.marker([point.latitude, point.longitude], { icon: buildMarkerIcon(device) })
             .addTo(trackLayerGroup)
             .bindTooltip(buildTooltipNode(deviceId, point.seen_at), { permanent: true, direction: "top" });
-          marker.on("click", () => openAlertDialog(marker.getElement(), deviceId));
+          marker.on("click", (event) => {
+            L.DomEvent.stopPropagation(event);
+            openAlertDialog(marker.getElement(), deviceId);
+          });
+          latestPositionMarkers.push(marker);
           return;
         }
 
