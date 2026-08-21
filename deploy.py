@@ -5,12 +5,13 @@
 # ///
 """Deploy this project to its pi-cloud remote and sync its sqlite databases.
 
-Run `deploy.py COMMAND --help` for a command's options and examples.
+Two subcommands:
+  code  git pull/fetch on the remote, then restart its systemd services.
+  db    rsync the local sqlite databases with the remote's data/ directory.
 """
 
 import enum
 import subprocess
-import tomllib
 from datetime import datetime
 from pathlib import Path
 
@@ -18,40 +19,25 @@ import typer
 
 REMOTE_HOST = "pi-cloud"
 REMOTE_URL = f"mnalavadi@{REMOTE_HOST}"
-PROJECT_DIR = Path(__file__).parent
-INSTALL_DIR = PROJECT_DIR / "install"
-LOCAL_DATA_DIR = PROJECT_DIR / "data"
-
-# Taken from pyproject.toml rather than the local directory name, so the remote
-# paths match what install/install.sh names the services and directories -- a
-# local clone in a differently-named folder would otherwise point elsewhere.
-with (PROJECT_DIR / "pyproject.toml").open("rb") as _handle:
-    PROJECT_NAME = tomllib.load(_handle)["project"]["name"]
-
+PROJECT_NAME = Path(__file__).parent.name
 REMOTE_PROJECT_PATH = f"~/{PROJECT_NAME}"
+INSTALL_DIR = Path(__file__).parent / "install"
+
 REMOTE_DATA_PATH = f"/home/mnalavadi/{PROJECT_NAME}/data"
 REMOTE_DATA_DIR = f"{REMOTE_URL}:{REMOTE_DATA_PATH}"
-REMOTE_PROJECT_DIR = f"{REMOTE_URL}:/home/mnalavadi/{PROJECT_NAME}"
-
-# data/ is synced separately (and much more carefully) by the `db` command - never
-# blanket-overwrite the live databases as a side effect of copying code around.
-COPY_EXCLUDES = [
-    ".git/",
-    ".venv/",
-    "__pycache__/",
-    "*.pyc",
-    ".pytest_cache/",
-    ".ruff_cache/",
-    ".coverage",
-    "data/",
-    # `script(1)` session captures, which can be tens of megabytes.
-    "typescript",
-]
 
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help=f"Deploy {PROJECT_NAME} to pi-cloud and sync its sqlite databases. Run a command with --help.",
+    help=(
+        f"Deploy {PROJECT_NAME} to pi-cloud and sync its sqlite databases.\n\n"
+        "Examples:\n\n"
+        "  deploy.py code pull        git pull + restart services\n\n"
+        "  deploy.py code fetch       hard reset to origin/main + restart (after a force-push)\n\n"
+        "  deploy.py db pull          download databases from the remote\n\n"
+        "  deploy.py db push          upload databases (refuses if the remote is newer)\n\n"
+        "  deploy.py db push --force  upload anyway, overwriting the remote"
+    ),
 )
 
 
@@ -60,7 +46,7 @@ class DeployMode(str, enum.Enum):
     fetch = "fetch"
 
 
-class SyncDirection(str, enum.Enum):
+class DbDirection(str, enum.Enum):
     pull = "pull"
     push = "push"
 
@@ -100,27 +86,13 @@ def _discover_services() -> list[str]:
     return services
 
 
-def _restart_services_cmd(services: list[str]) -> str:
-    """Build the remote shell snippet that restarts and status-checks the given services."""
-    joined_services = " ".join(services)
-    return f"sudo systemctl restart {joined_services} && sudo systemctl status {joined_services} --no-pager"
-
-
-def _run_remote(remote_cmd: str) -> None:
-    """Run `remote_cmd` on REMOTE_HOST over ssh, echoing its stdout/stderr."""
-    result = _run(["ssh", REMOTE_HOST, remote_cmd], capture=True)
-    typer.echo(result.stdout)
-    if result.stderr:
-        typer.echo(result.stderr)
-
-
 @app.command()
 def code(
     mode: DeployMode = typer.Argument(
         help="'pull' for a normal git pull, 'fetch' for a hard reset to origin/main (after a force-push)",
     ),
 ) -> None:
-    r"""\[pull | fetch] Deploy code: git pull/fetch on the remote, then restart its services."""
+    """Deploy code: git pull/fetch on the remote, then restart its services."""
     services = _discover_services()
     typer.secho(f"Detected {len(services)} service(s): {', '.join(services)}", fg=typer.colors.CYAN)
 
@@ -130,55 +102,35 @@ def code(
     else:
         git_cmd = "git pull"
 
-    remote_cmd = f"cd {REMOTE_PROJECT_PATH} && {git_cmd} && {_restart_services_cmd(services)}"
+    joined_services = " ".join(services)
+    remote_cmd = (
+        f"cd {REMOTE_PROJECT_PATH} && {git_cmd} && "
+        f"sudo systemctl restart {joined_services} && "
+        f"sudo systemctl status {joined_services} --no-pager"
+    )
 
     typer.secho(f"Deploying {PROJECT_NAME} to {REMOTE_HOST}...", fg=typer.colors.BLUE)
-    _run_remote(remote_cmd)
+    result = _run(["ssh", REMOTE_HOST, remote_cmd], capture=True)
+
+    typer.echo(result.stdout)
+    if result.stderr:
+        typer.echo(result.stderr)
     typer.secho("Deployment complete.", fg=typer.colors.GREEN)
-
-
-@app.command()
-def restart() -> None:
-    """Restart the remote's systemd services without pulling any code."""
-    services = _discover_services()
-    typer.secho(f"Detected {len(services)} service(s): {', '.join(services)}", fg=typer.colors.CYAN)
-
-    typer.secho(f"Restarting {PROJECT_NAME} services on {REMOTE_HOST}...", fg=typer.colors.BLUE)
-    _run_remote(_restart_services_cmd(services))
-    typer.secho("Restart complete.", fg=typer.colors.GREEN)
 
 
 def _discover_local_dbs() -> list[str]:
     """Return the db filenames present in local data/."""
-    return sorted(p.name for p in LOCAL_DATA_DIR.glob("*.db"))
-
-
-def _ssh_probe(remote_cmd: str) -> str:
-    """Run a read-only probe over ssh, distinguishing "no output" from "no connection".
-
-    `ls`/`stat` exit non-zero when the target is simply absent, which is a normal
-    answer here. ssh itself exits 255 when it can't connect -- that is not an
-    answer, and treating it as "nothing there" is what would let `db push`
-    silently overwrite a live remote database it never actually looked at.
-
-    Raises:
-        typer.Exit: If ssh could not reach the host.
-    """
-    result = subprocess.run(["ssh", REMOTE_URL, remote_cmd], capture_output=True, text=True)
-    if result.returncode == 255:
-        typer.secho(
-            f"Error: could not reach {REMOTE_URL} over ssh: {result.stderr.strip()}",
-            fg=typer.colors.RED,
-            err=True,
-        )
-        raise typer.Exit(1)
-    return result.stdout
+    return sorted(p.name for p in Path("data").glob("*.db"))
 
 
 def _discover_remote_dbs() -> list[str]:
     """Return the db filenames present in the remote's data/ directory."""
-    output = _ssh_probe(f"ls {REMOTE_DATA_PATH}/*.db 2>/dev/null")
-    return sorted(Path(line).name for line in output.splitlines() if line.strip())
+    result = subprocess.run(
+        ["ssh", REMOTE_URL, f"ls {REMOTE_DATA_PATH}/*.db 2>/dev/null"],
+        capture_output=True,
+        text=True,
+    )
+    return sorted(Path(line).name for line in result.stdout.splitlines() if line.strip())
 
 
 def _local_mtime(path: Path) -> float | None:
@@ -187,13 +139,17 @@ def _local_mtime(path: Path) -> float | None:
 
 
 def _remote_mtime(db_name: str) -> float | None:
-    """Return the remote db's mtime, or None if it genuinely doesn't exist yet.
+    """Return the remote db's mtime, or None if it doesn't exist yet.
 
-    A missing remote copy is an expected first-push scenario. An unreachable
-    host is not, and `_ssh_probe` aborts on it rather than reporting None --
-    which `_check_push_safety` would otherwise read as "safe to overwrite".
+    A missing remote copy is an expected first-push scenario, not an error,
+    so this intentionally skips `check=True` rather than raising on it.
     """
-    output = _ssh_probe(f"stat -c %Y '{REMOTE_DATA_PATH}/{db_name}' 2>/dev/null").strip()
+    result = subprocess.run(
+        ["ssh", REMOTE_URL, f"stat -c %Y '{REMOTE_DATA_PATH}/{db_name}' 2>/dev/null"],
+        capture_output=True,
+        text=True,
+    )
+    output = result.stdout.strip()
     return float(output) if output else None
 
 
@@ -211,7 +167,7 @@ def _check_push_safety(db_names: list[str]) -> bool:
     """
     safe = True
     for db_name in db_names:
-        local_file = LOCAL_DATA_DIR / db_name
+        local_file = Path("data") / db_name
         local_mtime = _local_mtime(local_file)
         if local_mtime is None:
             typer.secho(f"✗ {db_name}: no local copy at {local_file}.", fg=typer.colors.RED, err=True)
@@ -235,18 +191,18 @@ def _check_push_safety(db_names: list[str]) -> bool:
 
 @app.command()
 def db(
-    direction: SyncDirection = typer.Argument(help="'pull': remote -> local. 'push': local -> remote."),
+    direction: DbDirection = typer.Argument(help="'pull': remote -> local. 'push': local -> remote."),
     force: bool = typer.Option(
         False, "--force", help="Push even when the remote copy is newer. Overwrites live server data."
     ),
 ) -> None:
-    r"""\[pull | push] Sync this project's sqlite databases between local data/ and the remote.
+    """Sync this project's sqlite databases between local data/ and the remote.
 
     The pi is the authoritative writer, so push refuses when the remote copy
     is newer than local (it would silently discard data the pi has ingested
     since your last pull) unless --force is given.
     """
-    if direction is SyncDirection.pull:
+    if direction is DbDirection.pull:
         db_names = _discover_remote_dbs()
         if not db_names:
             typer.secho(
@@ -259,8 +215,7 @@ def db(
 
         for db_name in db_names:
             typer.secho(f"Pulling {db_name} from remote...", fg=typer.colors.BLUE)
-            LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
-            _run(["rsync", "-avz", f"{REMOTE_DATA_DIR}/{db_name}", str(LOCAL_DATA_DIR / db_name)])
+            _run(["rsync", "-avz", f"{REMOTE_DATA_DIR}/{db_name}", f"data/{db_name}"])
         typer.secho("Pull complete.", fg=typer.colors.GREEN)
         return
 
@@ -287,27 +242,8 @@ def db(
 
     for db_name in db_names:
         typer.secho(f"Pushing {db_name} to remote...", fg=typer.colors.BLUE)
-        _run(["rsync", "-avz", str(LOCAL_DATA_DIR / db_name), f"{REMOTE_DATA_DIR}/{db_name}"])
+        _run(["rsync", "-avz", f"data/{db_name}", f"{REMOTE_DATA_DIR}/{db_name}"])
     typer.secho("Push complete.", fg=typer.colors.GREEN)
-
-
-@app.command()
-def copy(
-    direction: SyncDirection = typer.Argument(help="'pull': remote -> local. 'push': local -> remote."),
-) -> None:
-    r"""\[pull | push] Rsync project files with the remote, bypassing git entirely.
-
-    Useful for trying out uncommitted changes on the pi. Does not touch data/
-    (see the `db` command for that) and does not restart any services - run
-    `code pull` afterwards, or restart the service manually, to pick up the change.
-    """
-    local = f"{PROJECT_DIR}/"
-    remote = f"{REMOTE_PROJECT_DIR}/"
-    source, dest = (remote, local) if direction is SyncDirection.pull else (local, remote)
-
-    typer.secho(f"Copying files {direction.value}: {source} -> {dest}", fg=typer.colors.BLUE)
-    _run(["rsync", "-avz", *(f"--exclude={pattern}" for pattern in COPY_EXCLUDES), source, dest])
-    typer.secho("Copy complete.", fg=typer.colors.GREEN)
 
 
 if __name__ == "__main__":
