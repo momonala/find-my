@@ -28,6 +28,16 @@
   --toolbar-height: 34px;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Motion. Two durations cover everything here: --duration-quick for state
+     that should feel instant (hover, a dialog dismissing) and --duration-fast
+     for motion the eye is meant to follow (the tab pill travelling, a dialog
+     opening). Leaving is quicker than arriving -- a surface on its way out
+     shouldn't make you wait for it. */
+  --duration-quick: 195ms;
+  --duration-fast: 325ms;
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --modal-scale: 0.96;
 }
 
 * {
@@ -91,6 +101,7 @@ body {
   background: var(--color-surface);
   color: var(--color-text);
   border-color: var(--color-border);
+  transition: background-color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .leaflet-control-zoom a:hover {
@@ -145,6 +156,10 @@ input:focus-visible {
   padding: 0 var(--space-3);
   cursor: pointer;
   box-shadow: var(--shadow-md);
+  transition:
+    background-color var(--duration-quick) var(--ease-smooth-out),
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .btn-floating:hover {
@@ -157,26 +172,23 @@ input:focus-visible {
   color: #ffffff;
 }
 
+/* A status readout, not a control -- it lives in the sidebar footer rather
+   than the map toolbar, where sitting among the chips gave it a button's
+   affordance and invited clicks that do nothing. On the sidebar's own surface
+   it needs no scrim or backdrop-filter to stay legible. */
 .last-updated {
   margin: 0;
-  font-size: 0.85rem;
-  height: var(--toolbar-height);
-  display: flex;
-  align-items: center;
+  font-size: 0.75rem;
   white-space: nowrap;
-  background: var(--color-surface-translucent);
-  backdrop-filter: blur(10px);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 0 var(--space-3);
-  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-muted);
 }
 
-.last-updated-group {
-  display: flex;
-  gap: var(--space-1);
-  align-items: center;
+.sidebar-footer {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
 }
 
 .btn-icon {
@@ -206,7 +218,7 @@ input:focus-visible {
   color: var(--color-text);
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
-  transition: border-color 0.1s;
+  transition: border-color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .map-style-select:hover,
@@ -233,7 +245,7 @@ input:focus-visible {
   border: none;
   border-radius: 11px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background-color var(--duration-quick) var(--ease-smooth-out);
   padding: 0;
 }
 
@@ -246,7 +258,7 @@ input:focus-visible {
   height: 16px;
   border-radius: 50%;
   background: #ffffff;
-  transition: transform 0.2s;
+  transition: transform var(--duration-quick) var(--ease-smooth-out);
 }
 
 .toggle-switch[aria-checked="true"] {
@@ -270,24 +282,37 @@ input:focus-visible {
   max-width: 320px;
 }
 
-.error-banner {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius);
-  background: var(--color-danger-bg);
-  color: var(--color-danger);
-  font-size: 0.85rem;
-  box-shadow: var(--shadow-md);
-}
-
+.error-banner,
 .warning-banner {
   margin: 0;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius);
-  background: var(--color-warning-bg);
-  color: var(--color-warning);
   font-size: 0.85rem;
   box-shadow: var(--shadow-md);
+  /* Enter only. `hidden` toggles display:none with no opacity change of its
+     own, so transitioning `display` here would just hold the banner visible
+     for the duration and then blink it out -- worse than an instant hide. */
+  transition:
+    opacity var(--duration-fast) var(--ease-smooth-out),
+    transform var(--duration-fast) var(--ease-smooth-out);
+}
+
+.error-banner {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.warning-banner {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+@starting-style {
+  .error-banner:not([hidden]),
+  .warning-banner:not([hidden]) {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-2)));
+  }
 }
 
 .empty-state {
@@ -307,10 +332,19 @@ input:focus-visible {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   pointer-events: none;
+  /* Enter only, same reason as the banners above -- and this one re-hides on
+     every renderTracks(), so a hold-then-blink would be very visible. */
+  transition: opacity var(--duration-fast) var(--ease-smooth-out);
 }
 
 :where(.empty-state, .list-empty)[hidden] {
   display: none;
+}
+
+@starting-style {
+  .empty-state:not([hidden]) {
+    opacity: 0;
+  }
 }
 
 /* --- Sidebar ------------------------------------------------------------ */
@@ -334,6 +368,7 @@ input:focus-visible {
 }
 
 .tab-switcher {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   gap: 2px;
@@ -343,7 +378,29 @@ input:focus-visible {
   border-radius: 999px;
 }
 
+/* Anchored at left:0 -- the same origin offsetLeft is measured from, so JS can
+   write the active tab's offsetLeft straight into translateX with no padding
+   fudge factor. top/bottom rather than a height calc for the same reason. */
+.tab-switcher-pill {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: 0;
+  background: var(--color-surface);
+  border-radius: 999px;
+  transform: translateX(0);
+  transition:
+    transform var(--duration-fast) var(--ease-smooth-out),
+    width var(--duration-fast) var(--ease-smooth-out);
+  will-change: transform, width;
+  z-index: 0;
+  pointer-events: none;
+}
+
 .tab-button {
+  position: relative;
+  z-index: 1;
   flex: 1;
   display: flex;
   align-items: center;
@@ -356,10 +413,10 @@ input:focus-visible {
   font-weight: 600;
   color: var(--color-text-muted);
   cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-smooth-out);
 }
 
 .tab-button.is-active {
-  background: var(--color-surface);
   color: var(--color-text);
 }
 
@@ -400,6 +457,9 @@ input:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  transition:
+    background-color var(--duration-quick) var(--ease-smooth-out),
+    color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .sort-chip.is-active {
@@ -425,6 +485,7 @@ input:focus-visible {
   border-radius: var(--radius);
   cursor: pointer;
   font-size: 0.8rem;
+  transition: background-color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .btn-ghost:hover {
@@ -450,6 +511,7 @@ input:focus-visible {
      selected-row tint below so it reads as "this device's color" rather
      than a generic highlight. */
   --row-accent: var(--color-border);
+  transition: background-color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .device-row:hover {
@@ -475,6 +537,12 @@ input:focus-visible {
   padding: 0;
   cursor: pointer;
   border-radius: 50%;
+}
+
+.avatar-button .avatar {
+  transition: outline-color var(--duration-quick) var(--ease-smooth-out);
+  outline: 2px solid transparent;
+  outline-offset: 1px;
 }
 
 .device-main {
@@ -509,8 +577,7 @@ input:focus-visible {
 }
 
 .avatar-button:hover .avatar {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
+  outline-color: var(--color-accent);
 }
 
 /* The current-position marker on the map (Leaflet divIcon). */
@@ -569,6 +636,7 @@ input:focus-visible {
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  transition: background-color var(--duration-fast) var(--ease-smooth-out);
 }
 
 .battery-dot--full {
@@ -585,7 +653,7 @@ input:focus-visible {
 
 .battery-dot--very-low {
   background: var(--color-danger);
-  animation: battery-pulse 1.2s ease-in-out infinite;
+  animation: battery-pulse 1.56s ease-in-out infinite;
 }
 
 @keyframes battery-pulse {
@@ -640,6 +708,69 @@ input:focus-visible {
 
 .icon-dialog::backdrop {
   background: rgba(0, 0, 0, 0.5);
+}
+
+/* Scale + fade both directions, driven purely by the [open] attribute, so
+   every close path (Esc, form submit via method="dialog", the Cancel button)
+   animates without needing a JS hook per dialog.
+
+   The base rule is the *closed* state and carries the close duration; [open]
+   is the open state and carries the (slower) open duration -- a transition is
+   read from the style being transitioned *into*, which is how one element
+   gets asymmetric in/out timing. @starting-style supplies the pre-open values
+   so the first frame after showModal() starts small instead of snapping in.
+
+   `display` and `overlay` need allow-discrete or the dialog would leave the
+   top layer on frame one and the close animation would never be seen. */
+.icon-dialog,
+.alert-dialog {
+  opacity: 0;
+  transform: scale(var(--modal-scale));
+  transition:
+    opacity var(--duration-quick) var(--ease-smooth-out),
+    transform var(--duration-quick) var(--ease-smooth-out),
+    display var(--duration-quick) allow-discrete,
+    overlay var(--duration-quick) allow-discrete;
+}
+
+.icon-dialog[open],
+.alert-dialog[open] {
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity var(--duration-fast) var(--ease-smooth-out),
+    transform var(--duration-fast) var(--ease-smooth-out),
+    display var(--duration-fast) allow-discrete,
+    overlay var(--duration-fast) allow-discrete;
+}
+
+.icon-dialog::backdrop,
+.alert-dialog::backdrop {
+  opacity: 0;
+  transition:
+    opacity var(--duration-quick) var(--ease-smooth-out),
+    display var(--duration-quick) allow-discrete;
+}
+
+.icon-dialog[open]::backdrop,
+.alert-dialog[open]::backdrop {
+  opacity: 1;
+  transition:
+    opacity var(--duration-fast) var(--ease-smooth-out),
+    display var(--duration-fast) allow-discrete;
+}
+
+@starting-style {
+  .icon-dialog[open],
+  .alert-dialog[open] {
+    opacity: 0;
+    transform: scale(var(--modal-scale));
+  }
+
+  .icon-dialog[open]::backdrop,
+  .alert-dialog[open]::backdrop {
+    opacity: 0;
+  }
 }
 
 .icon-dialog-label {
@@ -740,7 +871,72 @@ input:focus-visible {
    device row's .device-main button here. */
 .alert-list-row {
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: background-color var(--duration-quick) var(--ease-smooth-out);
+}
+
+/* Alert rows are the only list rows that appear and disappear because the
+   user just did something, so they're the only ones worth animating -- the
+   device/item lists change from poll data, where motion would be noise.
+
+   Both states are keyed to one row from JS rather than to .alert-list-row
+   broadly: renderDeviceList() rebuilds every row, and refreshAll() calls it
+   every 30s, so a blanket rule would re-animate the whole list on each poll
+   cycle. The implicit `to` in the keyframes resolves to the row's own resting
+   style, so there's nothing to keep in sync here. */
+@keyframes alert-row-enter {
+  from {
+    opacity: 0;
+    transform: translateX(calc(-1 * var(--space-3)));
+  }
+}
+
+.alert-list-row.is-entering {
+  animation: alert-row-enter var(--duration-fast) var(--ease-smooth-out);
+}
+
+/* The alert radius ring on the map. Travelling exactly one dash tile loops
+   seamlessly: the ring ends the cycle looking identical to how it started, so
+   there's no visible reset. All three inputs -- tile length, speed, direction
+   -- are set per ring by tuneRadiusDashes() in dashboard.js, which is also
+   what guarantees the tile divides the circumference evenly.
+
+   stroke-dashoffset can't be driven from a var directly, so the animation
+   moves a registered length property and dashoffset is computed from it. */
+@property --march-shift {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes alert-radius-march {
+  to {
+    --march-shift: var(--march-period, 12px);
+  }
+}
+
+.alert-radius {
+  stroke-dashoffset: calc(-1 * var(--march-shift));
+  animation: alert-radius-march var(--march-duration, 0.55s) linear infinite;
+  animation-direction: var(--march-direction, normal);
+}
+
+/* Height is set inline in px by JS before this class lands -- it can't be
+   declared here, since `height: 0` needs a concrete start value to tween
+   from. Collapsing the padding too is what actually closes the gap: a row
+   left at `height: 0` still occupies its vertical padding. */
+.alert-list-row.is-removing {
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(var(--space-4));
+  padding-top: 0;
+  padding-bottom: 0;
+  pointer-events: none;
+  transition:
+    height var(--duration-quick) var(--ease-smooth-out),
+    padding-top var(--duration-quick) var(--ease-smooth-out),
+    padding-bottom var(--duration-quick) var(--ease-smooth-out),
+    opacity var(--duration-quick) var(--ease-smooth-out),
+    transform var(--duration-quick) var(--ease-smooth-out);
 }
 
 /* Feedback for the press-and-hold-to-edit gesture on touch (see dashboard.js) --
@@ -763,6 +959,7 @@ input:focus-visible {
   flex-shrink: 0;
   color: var(--color-danger);
   font-weight: 600;
+  transition: background-color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .alert-delete-button:hover {
@@ -830,7 +1027,7 @@ input:focus-visible {
     max-height: 100vh;
     border-radius: 0;
     transform: translateX(-100%);
-    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+    transition: transform 0.364s cubic-bezier(0.32, 0.72, 0, 1);
   }
 
   .sidebar.is-open {
@@ -856,8 +1053,7 @@ input:focus-visible {
   }
 
   .map-toolbar select,
-  .map-toolbar .btn-floating,
-  .last-updated {
+  .map-toolbar .btn-floating {
     font-size: 0.65rem;
     padding: 0 var(--space-2);
   }
@@ -871,22 +1067,57 @@ input:focus-visible {
     min-width: 0;
   }
 
-  .last-updated-group {
-    flex: 0 1 auto;
-    min-width: 0;
-  }
-
-  .last-updated {
-    height: auto;
-    min-height: var(--toolbar-height);
-    white-space: normal;
-    overflow-wrap: break-word;
-    max-width: 80px;
-  }
-
   .banner-stack {
     left: var(--space-2);
     right: var(--space-2);
     max-width: none;
+  }
+}
+
+/* --- Reduced motion ------------------------------------------------------
+   One block for the whole sheet rather than a guard per transition, so
+   anything added above is covered by default instead of by remembering.
+   Scoped to this app's own selectors -- deliberately not a `*` sweep, which
+   would also disable Leaflet's internal pan/zoom animations.
+
+   Positional and state changes still happen, they just arrive instantly. The
+   very-low battery pulse is dropped to its opaque keyframe: the dot stays
+   visible and red, it just stops flashing for attention. */
+
+@media (prefers-reduced-motion: reduce) {
+  .leaflet-control-zoom a,
+  .btn-floating,
+  .map-style-select,
+  .toggle-switch,
+  .toggle-switch::after,
+  .error-banner,
+  .warning-banner,
+  .empty-state,
+  .sidebar,
+  .tab-switcher-pill,
+  .tab-button,
+  .sort-chip,
+  .btn-ghost,
+  .device-row,
+  .avatar-button .avatar,
+  .battery-dot,
+  .icon-dialog,
+  .icon-dialog::backdrop,
+  .icon-dialog[open],
+  .icon-dialog[open]::backdrop,
+  .alert-dialog,
+  .alert-dialog::backdrop,
+  .alert-dialog[open],
+  .alert-dialog[open]::backdrop,
+  .alert-list-row,
+  .alert-list-row.is-removing,
+  .alert-delete-button {
+    transition: none !important;
+  }
+
+  .battery-dot--very-low,
+  .alert-radius,
+  .alert-list-row.is-entering {
+    animation: none !important;
   }
 }

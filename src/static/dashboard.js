@@ -19,6 +19,13 @@
   const DEFAULT_ZOOM = 16;
   const FALLBACK_CENTER = [0, 0];
   const EARTH_RADIUS_M = 6371008.8;
+  // Web Mercator uses the sphere at the equator, not the mean radius above.
+  const EARTH_CIRCUMFERENCE_M = 40_075_016.686;
+  // Alert radius rings: roughly how long one dash-plus-gap should be, and how
+  // long the dashes take to travel all the way around the ring -- a lap, not a
+  // tile, so the apparent spin doesn't change with zoom (see tuneRadiusDashes).
+  const TARGET_DASH_PERIOD_PX = 12;
+  const MARCH_LAP_SECONDS = 78;
   const STATUS_POLL_MS = 30_000;
   const TAB_KEYS = ["item", "device", "alert"];
   // Which device/item is auto-selected on first load, per tab -- lets the
@@ -51,17 +58,25 @@
   // Markers carrying the permanent "current position" tooltip, so a map
   // click can close them all (see initMap's map.on("click", ...)).
   let latestPositionMarkers = [];
+  // Alert radius circles currently on the map, kept so a zoom can refit their
+  // dash pattern (see tuneRadiusDashes).
+  let alertRadiusCircles = [];
   // The device ids actually drawn last time, so a same-selection refresh
   // doesn't re-fit the map and discard wherever the user just panned/zoomed to.
   let lastFitDeviceIds = null;
   // Only apply the default selection once -- otherwise every poll refresh
   // would stomp on whatever the user has since selected.
   let didApplyDefaultSelection = false;
+  // The alert just created, so its row animates in on the next render only.
+  // Cleared as soon as that row is built: renderDeviceList() also runs on the
+  // 30s poll, and leaving this set would replay the animation every cycle.
+  let enteringAlertId = null;
 
   const lastUpdatedEl = document.getElementById("last-updated");
   const deviceListEl = document.getElementById("device-list");
   const deviceEmptyEl = document.getElementById("device-empty");
   const tabSwitcherEl = document.querySelector(".tab-switcher");
+  const tabSwitcherPillEl = document.querySelector(".tab-switcher-pill");
   const sortGroupEl = document.querySelector(".sort-group");
   const timeRangeEl = document.getElementById("time-range");
   let historyToggleEl = null; // built inside the map style dialog
@@ -217,6 +232,34 @@
     return response.json();
   }
 
+  // --- Motion --------------------------------------------------------------
+  //
+  // Read durations back out of the stylesheet rather than repeating them here,
+  // so retuning a token in dashboard.css can't leave JS waiting the old
+  // amount of time and cutting an animation off part-way.
+
+  const REDUCED_MOTION_QUERY = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  function motionDurationMs(token) {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+    if (raw.endsWith("ms")) return parseFloat(raw);
+    if (raw.endsWith("s")) return parseFloat(raw) * 1000;
+    return 0;
+  }
+
+  // Slides a list row out and collapses its height so the rows below close the
+  // gap. Without the collapse the row would fade in place and everything under
+  // it would snap upwards the moment the re-render dropped it -- which is the
+  // jank this is here to avoid. Resolves once the row is done animating.
+  function collapseRow(row) {
+    if (REDUCED_MOTION_QUERY.matches) return Promise.resolve();
+    row.style.height = `${row.offsetHeight}px`;
+    void row.offsetHeight; // commit the measured height, so collapsing to 0 has something to tween from
+    row.classList.add("is-removing");
+    row.style.height = "0px";
+    return new Promise((resolve) => setTimeout(resolve, motionDurationMs("--duration-quick")));
+  }
+
   // --- Header: last full poll cycle ---------------------------------------
 
   function formatLastUpdatedText(isoString) {
@@ -263,6 +306,12 @@
     // selection change), which re-binds them permanent again.
     map.on("click", () => {
       latestPositionMarkers.forEach((marker) => marker.closeTooltip());
+    });
+    // A circle's pixel size changes with zoom, and the dash pattern is fitted
+    // to that size (see tuneRadiusDashes), so it has to be refitted after a
+    // zoom -- renderTracks doesn't run for a plain zoom.
+    map.on("zoomend", () => {
+      alertRadiusCircles.forEach(tuneRadiusDashes);
     });
   }
 
@@ -547,18 +596,74 @@
       }
       if (!center) continue;
 
-      circles.push(
-        L.circle(center, {
-          radius: alert.threshold_m,
-          color: focusColor,
-          weight: 2,
-          dashArray: "6 6",
-          fillOpacity: 0.06,
-        }).addTo(trackLayerGroup),
-      );
+      const circle = L.circle(center, {
+        radius: alert.threshold_m,
+        color: focusColor,
+        weight: 2,
+        fillOpacity: 0.06,
+        // Marching dashes (see .alert-radius in dashboard.css) -- the crawl
+        // reads as a live perimeter rather than a static annotation. The dash
+        // pattern itself is set by tuneRadiusDashes, not here.
+        className: "alert-radius",
+      }).addTo(trackLayerGroup);
+
+      // Vary the speed a little per ring so several alerts on one device drift
+      // out of phase instead of marching as a rigid stack. Derived from the
+      // alert id rather than random, so a poll-driven re-render redraws each
+      // ring at the same speed it already had.
+      circle.marchJitter = ((hashString(String(alert.id)) % 41) - 20) / 100;
+      circle.marchReversed = circles.length % 2 === 1;
+      tuneRadiusDashes(circle);
+
+      circles.push(circle);
     }
 
+    alertRadiusCircles = circles;
     return circles;
+  }
+
+  // Fit the dash pattern to the ring so the dashes tile its circumference a
+  // whole number of times. Without that the pattern doesn't meet itself at the
+  // start of the path, leaving a seam that reads as the ring resetting once per
+  // cycle. Because the tile length varies per ring, so does the distance the
+  // animation has to travel to loop -- hence --march-period.
+  function tuneRadiusDashes(circle) {
+    const path = circle.getElement();
+    if (!path) return;
+
+    const pixelRadius = circle.getRadius() / metersPerPixel(circle.getLatLng().lat);
+    const circumference = 2 * Math.PI * pixelRadius;
+    // Round to whole tiles, but never so few that the dashes read as segments
+    // of the circle rather than a dashed line.
+    const tiles = Math.max(12, Math.round(circumference / TARGET_DASH_PERIOD_PX));
+    const period = circumference / tiles;
+
+    // Time one tile so that a full lap always takes the same wall-clock time,
+    // whatever the ring's pixel size. A fixed per-tile duration instead holds
+    // the dashes to a fixed px/s, which makes a small (zoomed-out) ring appear
+    // to spin faster and faster the further you zoom out.
+    const duration = (MARCH_LAP_SECONDS / tiles) * (1 + circle.marchJitter);
+
+    circle.setStyle({ dashArray: `${(period / 2).toFixed(3)} ${(period / 2).toFixed(3)}` });
+    path.style.setProperty("--march-period", `${period.toFixed(3)}px`);
+    path.style.setProperty("--march-duration", `${duration.toFixed(4)}s`);
+    path.style.setProperty("--march-direction", circle.marchReversed ? "reverse" : "normal");
+  }
+
+  // Web Mercator ground resolution -- the basemaps are all EPSG:3857, and
+  // Leaflet gives no public accessor for this.
+  function metersPerPixel(latitude) {
+    return (EARTH_CIRCUMFERENCE_M * Math.cos((latitude * Math.PI) / 180)) / 2 ** (map.getZoom() + 8);
+  }
+
+  // Small stable hash, used to derive per-alert values that must survive a
+  // re-render (unlike Math.random, which would change on every poll).
+  function hashString(value) {
+    let hash = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      hash = (hash * 31 + value.charCodeAt(index)) | 0;
+    }
+    return Math.abs(hash);
   }
 
   // --- Device list: tabs, sorting, rows ------------------------------------
@@ -607,15 +712,40 @@
     renderDeviceList();
   }
 
-  function setActiveTab(tab, { focus = false } = {}) {
+  // Slides the pill behind the active tab. `animate: false` (first paint,
+  // resize) suspends the transition so the pill snaps into place instead of
+  // sweeping in from its zero-width starting position.
+  function moveTabPill(button, { animate = true } = {}) {
+    if (!tabSwitcherPillEl || !button) return;
+
+    const write = () => {
+      tabSwitcherPillEl.style.transform = `translateX(${button.offsetLeft}px)`;
+      tabSwitcherPillEl.style.width = `${button.offsetWidth}px`;
+    };
+
+    if (animate) {
+      write();
+      return;
+    }
+    const previousTransition = tabSwitcherPillEl.style.transition;
+    tabSwitcherPillEl.style.transition = "none";
+    write();
+    void tabSwitcherPillEl.offsetWidth; // flush, so restoring below can't animate this write
+    tabSwitcherPillEl.style.transition = previousTransition;
+  }
+
+  function setActiveTab(tab, { focus = false, animatePill = true } = {}) {
     state.activeTab = tab;
+    let activeButton = null;
     for (const button of tabSwitcherEl.querySelectorAll(".tab-button")) {
       const isActive = button.dataset.tab === tab;
       button.classList.toggle("is-active", isActive);
       button.setAttribute("aria-selected", String(isActive));
       button.tabIndex = isActive ? 0 : -1;
+      if (isActive) activeButton = button;
       if (isActive && focus) button.focus();
     }
+    moveTabPill(activeButton, { animate: animatePill });
     deviceListEl.setAttribute("aria-labelledby", `tab-${tab}`);
     deviceToolbarEl.hidden = tab === "alert";
     renderDeviceList();
@@ -892,6 +1022,10 @@
     li.className = "device-row alert-list-row";
     li.dataset.deviceId = String(alert.device_id);
     li.dataset.alertId = String(alert.id);
+    if (alert.id === enteringAlertId) {
+      li.classList.add("is-entering");
+      enteringAlertId = null;
+    }
     li.style.setProperty("--row-accent", colorForDevice(alert.device_id));
 
     const avatar = document.createElement("span");
@@ -1116,7 +1250,7 @@
 
   async function createAlertRequest(deviceId, alertType, thresholdM, anchor = "home") {
     try {
-      await fetchJson("/alerts", {
+      const created = await fetchJson("/alerts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1126,6 +1260,11 @@
           anchor,
         }),
       });
+      // Marks just this row to animate in, so the new alert is findable in a
+      // list that's otherwise sorted by device name rather than recency.
+      // Optional chained: an endpoint that returns no body simply means no
+      // enter animation, not a broken render.
+      enteringAlertId = created?.id ?? null;
       await loadAlerts();
       renderDeviceList();
       reloadTracks();
@@ -1149,13 +1288,22 @@
     }
   }
 
-  async function deleteAlertRequest(alertId) {
+  async function deleteAlertRequest(alertId, row) {
     try {
+      // Collapse the row while the DELETE is still in flight so the click
+      // feels immediate, but hold the re-render until both have finished --
+      // renderDeviceList() replaces every row, which would otherwise cut the
+      // animation off on its first frame.
+      const collapsed = row ? collapseRow(row) : Promise.resolve();
       await fetchJson(`/alerts/${alertId}`, { method: "DELETE" });
       await loadAlerts();
+      await collapsed;
       renderDeviceList();
       reloadTracks();
     } catch (error) {
+      // Rebuild from state.alerts so a failed delete doesn't strand a
+      // half-collapsed row with inline styles on it.
+      renderDeviceList();
       handleFatalError(error);
     }
   }
@@ -1255,7 +1403,10 @@
     }
     const deleteAlertButton = event.target.closest('button[data-action="delete-alert"]');
     if (deleteAlertButton) {
-      deleteAlertRequest(Number(deleteAlertButton.dataset.alertId));
+      deleteAlertRequest(
+        Number(deleteAlertButton.dataset.alertId),
+        deleteAlertButton.closest(".alert-list-row"),
+      );
       return;
     }
     const alertRow = event.target.closest(".alert-list-row");
@@ -1284,6 +1435,13 @@
     const button = event.target.closest(".tab-button");
     if (!button) return;
     setActiveTab(button.dataset.tab);
+  });
+
+  // The pill's position is measured in px, so it has to be re-measured
+  // whenever the switcher's width changes -- without animating, since this
+  // isn't a tab change the user is watching.
+  window.addEventListener("resize", () => {
+    moveTabPill(tabSwitcherEl.querySelector(".tab-button.is-active"), { animate: false });
   });
 
   tabSwitcherEl.addEventListener("keydown", (event) => {
@@ -1453,7 +1611,7 @@
 
   initMap()
     .then(() => {
-      setActiveTab(state.activeTab);
+      setActiveTab(state.activeTab, { animatePill: false });
       updateSortIndicators();
       return Promise.all([loadDevices(), loadStatus(), loadAlerts()]);
     })
