@@ -15,6 +15,7 @@ alignment advances on every locate and is kept in the database instead.
 """
 
 import asyncio
+import gc
 import hashlib
 import json
 import logging
@@ -268,19 +269,51 @@ def _get_event_loop() -> asyncio.AbstractEventLoop:
 
 
 _anisette_provider: LocalAnisetteProvider | None = None
+_anisette_uses = 0
+# How many header generations one provider serves before it is rebuilt. Each
+# generation re-enters the emulated ARM library and appends ~40-50 kB to
+# Unicorn's JIT translation buffer, which QEMU only reclaims when its 1 GiB
+# region flushes -- so a provider kept forever grows unboundedly. 200 caps that
+# at roughly 10 MB, paid for with one VM rebuild every few hours.
+_ANISETTE_MAX_USES = 200
 
 
 def _get_anisette_provider(state: dict) -> LocalAnisetteProvider:
-    """Return the process-wide Anisette provider, building it once from cached state.
+    """Return the process-wide Anisette provider, rebuilt every `_ANISETTE_MAX_USES` uses.
 
-    A new unicorn VM is spun up to build one of these, so it's built once and
-    reused rather than recreated on every poll cycle. The provider has its own
-    internal VM-restart mechanism for its allocator's memory leak, but that only
-    kicks in if the same instance survives across calls.
+    Building one spins up a unicorn VM, so it is reused across poll cycles --
+    but not indefinitely, because the emulator's JIT buffer only shrinks when
+    the VM goes away. See "Why RAM saw-tooths" in the README. `anisette`'s own
+    VM-restart mechanism does not help: it fires on guest-allocator
+    utilisation, which sits near 0.1% under this workload against a 50%
+    threshold.
+
+    Rebuilding from `state` rather than clearing `_ani` in place means each new
+    VM starts from the provisioning data as it is on disk now.
+
+    Both teardown lines are load-bearing:
+
+    - Clearing `_ani` releases the VM directly. Left to the collector,
+      `findmy.util.abc.Closable.__del__` resurrects the provider into a task on
+      the shared event loop, holding its VM for one further cycle -- steady
+      state becomes two VMs, not one.
+    - `gc.collect()` is what frees it. The VM is reachable only through a
+      reference cycle (unicorn's hook callbacks close over the VM that owns the
+      `Uc` holding them), and the cyclic collector triggers on object *counts*,
+      which a VM barely moves while holding tens of MB behind a few objects.
+
+    Get either wrong and discarded VMs accumulate, making memory use worse than
+    no recycling at all.
     """
-    global _anisette_provider
+    global _anisette_provider, _anisette_uses
+    if _anisette_uses >= _ANISETTE_MAX_USES:
+        _anisette_provider._ani = None  # noqa: SLF001 -- see above; no public equivalent
+        _anisette_provider = None
+        _anisette_uses = 0
+        gc.collect()
     if _anisette_provider is None:
         _anisette_provider = LocalAnisetteProvider.from_json(state["anisette"], libs_path=_ANISETTE_LIBS)
+    _anisette_uses += 1
     return _anisette_provider
 
 

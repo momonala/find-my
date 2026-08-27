@@ -1,10 +1,15 @@
-"""Tests for src/airtags.py's tracker key cache and alignment handling.
+"""Tests for src/airtags.py's tracker key cache, alignment, and VM recycling.
 
 The master keys in `.icloud_session/trackers.json` cannot be regenerated on a
 non-macOS host, so the properties worth pinning are that nothing on the poll
 path writes that file, that the one path which does write it cannot leave a
-partial file behind, and that the alignment cache it no longer carries survives
-a round trip through the database.
+partial file behind, and that the alignment cache survives a round trip through
+the database.
+
+The Anisette provider is covered separately at the bottom: the real one is an
+emulated ARM VM that takes seconds to build and needs a provisioned session, so
+it is stubbed, and what is asserted is *when* a new one is built and that the
+old one becomes unreachable.
 """
 
 import os
@@ -181,3 +186,129 @@ def test_alignment_failures_are_logged_not_silent(session_dir, monkeypatch, capl
         airtags._apply_alignment([make_accessory()])
 
     assert "Could not read tracker alignment" in caplog.text
+
+
+# ----------------------------------------------------------- VM recycling ----
+
+
+class _StubProvider:
+    """Stands in for a LocalAnisetteProvider, tagged so rebuilds are visible.
+
+    `_ani` stands in for the emulator VM the real provider builds lazily; the
+    recycling path must clear it rather than rely on the provider being
+    collected, so it is asserted on directly.
+    """
+
+    def __init__(self, serial: int) -> None:
+        self.serial = serial
+        self._ani = object()
+
+
+def _stub_provider_factory(monkeypatch) -> list[int]:
+    """Replace provider construction with a stub, returning one serial per build.
+
+    Serials rather than the providers themselves: holding the objects here would
+    keep discarded ones alive, which is precisely what
+    `test_dropped_provider_is_not_referenced_elsewhere` asserts cannot happen.
+    """
+    built: list[int] = []
+
+    def _build(_state, libs_path=None):  # noqa: ARG001 -- mirrors from_json's signature
+        built.append(len(built))
+        return _StubProvider(built[-1])
+
+    monkeypatch.setattr(airtags.LocalAnisetteProvider, "from_json", _build)
+    monkeypatch.setattr(airtags, "_anisette_provider", None)
+    monkeypatch.setattr(airtags, "_anisette_uses", 0)
+    return built
+
+
+_STATE = {"anisette": {"type": "aniLocal", "prov_data": None}}
+
+
+def test_provider_is_reused_within_the_use_budget(monkeypatch):
+    built = _stub_provider_factory(monkeypatch)
+
+    first = airtags._get_anisette_provider(_STATE)
+    for _ in range(airtags._ANISETTE_MAX_USES - 1):
+        assert airtags._get_anisette_provider(_STATE) is first
+
+    assert len(built) == 1
+
+
+def test_provider_is_rebuilt_once_the_budget_is_spent(monkeypatch):
+    """Recycling the VM is what returns its JIT buffer to the OS."""
+    built = _stub_provider_factory(monkeypatch)
+
+    for _ in range(airtags._ANISETTE_MAX_USES):
+        first = airtags._get_anisette_provider(_STATE)
+    second = airtags._get_anisette_provider(_STATE)
+
+    assert second is not first
+    assert (first.serial, second.serial) == (0, 1)
+    assert built == [0, 1]
+
+
+def test_rebuilding_starts_a_fresh_budget(monkeypatch):
+    """The counter resets on rebuild, so recycling stays periodic rather than
+    collapsing into a rebuild on every subsequent call."""
+    built = _stub_provider_factory(monkeypatch)
+
+    for _ in range(airtags._ANISETTE_MAX_USES * 2):
+        airtags._get_anisette_provider(_STATE)
+
+    assert len(built) == 2
+
+    airtags._get_anisette_provider(_STATE)
+    assert len(built) == 3
+
+
+def test_real_provider_still_has_the_attribute_the_fix_pokes():
+    """Guard against the upstream rename that would silently un-fix the leak.
+
+    The recycling path clears `LocalAnisetteProvider._ani` by name. The tests
+    around it use a stub that defines `_ani` itself, so they would keep passing
+    while production quietly regressed to accumulating VMs -- this asserts
+    against the real class instead. Constructing one is cheap and offline: its
+    __init__ deliberately defers building the emulator.
+    """
+    provider = airtags.LocalAnisetteProvider(libs_path=airtags._ANISETTE_LIBS)
+
+    assert hasattr(provider, "_ani")
+
+
+def test_recycling_releases_the_vm_without_waiting_for_collection(monkeypatch):
+    """Clearing `_ani` is what caps memory at one live VM.
+
+    Leaving it to the garbage collector keeps the outgoing VM resident for an
+    extra cycle, because `Closable.__del__` resurrects the provider into a task
+    on the shared event loop.
+    """
+    _stub_provider_factory(monkeypatch)
+
+    for _ in range(airtags._ANISETTE_MAX_USES):
+        outgoing = airtags._get_anisette_provider(_STATE)
+    assert outgoing._ani is not None
+
+    airtags._get_anisette_provider(_STATE)
+
+    assert outgoing._ani is None
+
+
+def test_dropped_provider_is_not_referenced_elsewhere(monkeypatch):
+    """The rebuild only reclaims memory if the module's reference was the last
+    one, so the discarded provider must actually become unreachable."""
+    import gc
+    import weakref
+
+    _stub_provider_factory(monkeypatch)
+
+    for _ in range(airtags._ANISETTE_MAX_USES):
+        provider = airtags._get_anisette_provider(_STATE)
+    witness = weakref.ref(provider)
+    del provider
+
+    airtags._get_anisette_provider(_STATE)
+    gc.collect()
+
+    assert witness() is None

@@ -9,5 +9,23 @@ Type=idle
 ExecStart=/home/mnalavadi/.local/bin/uv run findmy serve
 User=mnalavadi
 
+# The poller swallows its own exceptions, so the process only dies on something
+# it cannot handle -- in which case staying dead until someone notices is the
+# wrong default.
+Restart=always
+RestartSec=10
+
+# Backstop, not the fix. src/airtags.py recycles the Anisette VM to cap the
+# emulator's JIT buffer growth (see "Why RAM saw-tooths" in README.md), which
+# holds steady state near 165 MB. This catches the case where that recycling
+# silently stops working -- an upstream `findmy`/`anisette` change is enough --
+# whose failure mode is accumulating VMs rather than a crash. Reaching this
+# limit means the recycling needs looking at, not that the limit is too low.
+#
+# Includes reclaimable page cache from SQLite writes (~30 MB), which the kernel
+# drops before it OOM-kills anything, so the effective anon headroom is larger
+# than 300M - 165M suggests.
+MemoryMax=300M
+
 [Install]
 WantedBy=multi-user.target
