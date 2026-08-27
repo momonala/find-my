@@ -223,18 +223,33 @@ def test_init_db_is_idempotent(conn, tmp_path):
 
 
 def test_init_db_runs_alembic_migrations_to_head(tmp_path):
-    """init_db() drives schema via `alembic upgrade head` (see migrations/),
-    not raw DDL -- a fresh database should end up fully migrated, including
-    the alerts.anchor_lat/anchor_lon columns added after the baseline."""
+    """init_db() drives schema via `alembic upgrade head` (see migrations/), not
+    raw DDL -- a fresh database should end up fully migrated, including columns
+    and tables added after the baseline.
+
+    The expected revision is read from migrations/ rather than written out, so
+    adding a migration doesn't require editing this test to match.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    import src.db as db_module
     from src.db import get_connection
     from src.db import init_db
+
+    config = Config(str(db_module._ALEMBIC_INI))
+    config.set_main_option("script_location", str(db_module._MIGRATIONS_DIR))
+    expected_head = ScriptDirectory.from_config(config).get_current_head()
 
     db_path = tmp_path / "findmy.db"
     init_db(db_path)
 
     conn = get_connection(db_path)
-    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"] == "0004"
+    revision = conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"]
+    assert revision == expected_head
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)")}
     assert {"anchor_lat", "anchor_lon"} <= columns
     device_columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)")}
     assert "battery_level" in device_columns
+    tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "tracker_alignment" in tables

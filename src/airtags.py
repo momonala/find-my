@@ -10,17 +10,21 @@ macOS Keychain prompt — so it must run at the console, not over SSH.
 Session state is cached in .icloud_session/ so 2FA isn't required on every run,
 and so are the tracker keys — they are fixed at pairing, and caching them keeps
 the Keychain prompt to first run only. Pass --refresh-keys after pairing a new
-tracker.
+tracker, which is the only thing that rewrites the key cache. Rolling-key
+alignment advances on every locate and is kept in the database instead.
 """
 
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
+import sqlite3
 import sys
 from datetime import UTC
+from datetime import datetime
 
 import typer
 from findmy import AppleAccount
@@ -33,6 +37,9 @@ from findmy.accessory import FindMyAccessory
 from findmy.plist import list_accessories
 
 from src.batch_reports import locate_accessories
+from src.db import connection
+from src.db import load_tracker_alignment
+from src.db import save_tracker_alignment
 from src.errors import InteractiveAuthRequiredError
 from src.errors import TwoFactorRejectedError
 from src.errors import UnsupportedPlatformError
@@ -41,11 +48,14 @@ from src.tracking import Location
 from src.tracking import TrackedItem
 from src.tracking import require_credentials
 
+logger = logging.getLogger(__name__)
+
 _ACCOUNT_FILE = SESSION_DIR / "findmy_account.json"
 _ANISETTE_LIBS = SESSION_DIR / "ani_libs.bin"
-# Holds each tracker's master key in plaintext, so it stays chmod 600 and inside
-# the git-ignored session directory. Anyone with this file can locate these
-# trackers; delete it to fall back to reading the Keychain.
+# Holds each tracker's master key in plaintext, so it stays owner-read-only and
+# inside the git-ignored session directory. Anyone with this file can locate
+# these trackers; delete it to fall back to reading the Keychain. Read-only on
+# every path except --refresh-keys.
 _TRACKERS_FILE = SESSION_DIR / "trackers.json"
 
 # Apple's own devices report a model like "iPhone14,5" or "MacBookPro11,4",
@@ -99,18 +109,82 @@ def _stable_id(accessory: FindMyAccessory) -> str:
 
 
 def _save_trackers(trackers: list[FindMyAccessory]) -> None:
-    """Cache tracker keys and their rolling-key alignment, owner-readable only.
+    """Write the tracker key cache. Reached only by `--refresh-keys`.
 
-    The mode is applied *before* the keys are written -- creating the file with
-    the default umask and chmod'ing afterwards would leave the master keys
-    world-readable for the duration of the write.
+    Staged and renamed rather than truncated in place, so an interrupted write
+    cannot leave a half-file where the master keys used to be. The temp name
+    carries the pid, so two concurrent refreshes race on the rename -- atomic,
+    loser simply overwritten -- instead of interleaving their writes.
+
+    The mode is set at creation, not chmod'ed afterwards, which would leave the
+    keys world-readable for the duration of the write. 0o400 is read-only even
+    to its owner: the rename needs write permission on the directory, not on
+    either file, so a later refresh can still supersede it.
     """
-    payload = json.dumps([t.to_json() for t in trackers], indent=2)
-    descriptor = os.open(_TRACKERS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with open(descriptor, "w") as handle:  # noqa: PTH123 -- Path.open() can't take a raw fd
-        handle.write(payload)
-    # os.open() won't lower the mode of a file that already existed.
-    _TRACKERS_FILE.chmod(0o600)
+    payload = json.dumps([tracker.to_json() for tracker in trackers], indent=2)
+    staged = _TRACKERS_FILE.with_suffix(f".{os.getpid()}.tmp")
+    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+    try:
+        with open(descriptor, "w") as handle:  # noqa: PTH123 -- Path.open() can't take a raw fd
+            handle.write(payload)
+        staged.replace(_TRACKERS_FILE)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _apply_alignment(trackers: list[FindMyAccessory]) -> None:
+    """Fast-forward each tracker's rolling-key alignment from the database.
+
+    Alignment records how far through a tracker's key rotation the last locate
+    got, so the next one resumes there instead of rescanning up to a week of
+    keys. It is a performance cache: `update_alignment` keeps whichever value is
+    newer, so a stale row or no row at all just falls back to whatever
+    `trackers.json` carries, at the cost of a slower sweep.
+
+    A database error is swallowed for the same reason. `findmy airtags` and
+    `findmy all` locate without ever calling `init_db()`, so the table may not
+    exist -- a cache must not be able to fail a lookup that would otherwise
+    succeed.
+    """
+    try:
+        with connection() as conn:
+            stored = load_tracker_alignment(conn)
+    except sqlite3.Error as error:
+        logger.warning("Could not read tracker alignment (%s); falling back to the key cache", error)
+        return
+
+    for tracker in trackers:
+        entry = stored.get(_stable_id(tracker))
+        if entry is None:
+            continue
+        alignment_date, alignment_index = entry
+        tracker.update_alignment(datetime.fromisoformat(alignment_date), alignment_index)
+
+
+def _persist_alignment(trackers: list[FindMyAccessory]) -> None:
+    """Record where this locate left each tracker's key rotation.
+
+    Reads the two fields directly: `findmy` exposes no getter, and its only
+    public alternative, `to_json()`, would hex-encode the master key, skn and
+    sks into fresh strings once a minute just to read an integer.
+    tests/test_airtags.py pins that both attributes still exist.
+
+    Failing to store the cache must not fail a locate that already succeeded,
+    so a database error is logged and dropped -- see `_apply_alignment`.
+    """
+    alignment = {
+        _stable_id(tracker): (
+            tracker._alignment_date.isoformat(),  # noqa: SLF001 -- see above
+            tracker._alignment_index,  # noqa: SLF001 -- see above
+        )
+        for tracker in trackers
+    }
+    try:
+        with connection() as conn:
+            save_tracker_alignment(conn, alignment)
+    except sqlite3.Error as error:
+        logger.warning("Could not store tracker alignment (%s); the next locate will sweep", error)
 
 
 def load_trackers(refresh_keys: bool = False) -> list[FindMyAccessory]:
@@ -122,7 +196,9 @@ def load_trackers(refresh_keys: bool = False) -> list[FindMyAccessory]:
     Keychain requires macOS 14+.
     """
     if _TRACKERS_FILE.exists() and not refresh_keys:
-        return [FindMyAccessory.from_json(entry) for entry in json.loads(_TRACKERS_FILE.read_text())]
+        trackers = [FindMyAccessory.from_json(entry) for entry in json.loads(_TRACKERS_FILE.read_text())]
+        _apply_alignment(trackers)
+        return trackers
 
     if not is_macos_14_plus():
         raise UnsupportedPlatformError(_UNSUPPORTED_PLATFORM_MSG)
@@ -241,9 +317,10 @@ def fetch_airtags(refresh_keys: bool = False) -> list[TrackedItem]:
         return []
 
     locations = _get_event_loop().run_until_complete(_locate(accessories))
-    # Locating advances each accessory's rolling-key alignment in place;
-    # persisting it here is what keeps later runs from rescanning weeks of keys.
-    _save_trackers(accessories)
+    # Locating advances each accessory's alignment in place; persisting it keeps
+    # later runs from rescanning weeks of keys. It goes to the database, never
+    # back into the key cache.
+    _persist_alignment(accessories)
 
     return [
         TrackedItem(

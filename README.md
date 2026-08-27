@@ -116,10 +116,11 @@ Deployments running more than one web worker should pass `--no-poll` and run the
 process — `uv run findmy poll` — so exactly one process ever writes to the database; `install/` ships it as a
 separate systemd unit for that reason.
 
-`src/db.py` keeps five tables: `devices` (latest name/kind), `location_history` (one row per fix, written only
+`src/db.py` keeps six tables: `devices` (latest name/kind), `location_history` (one row per fix, written only
 on coordinate change so repeated identical reports don't grow the table), `device_icons` (dashboard marker
-emoji), `alerts` (movement/enter/exit definitions plus `is_active` state, evaluated by `src/alerts.py`), and
-`alert_events` (one row per actual firing, kept separate so config and trigger history don't share a row).
+emoji), `alerts` (movement/enter/exit definitions plus `is_active` state, evaluated by `src/alerts.py`),
+`alert_events` (one row per actual firing, kept separate so config and trigger history don't share a row), and
+`tracker_alignment` (where each tracker is in its rolling-key rotation — see [Key caching](#key-caching)).
 Schema itself is owned by [Alembic](#schema-migrations), not `db.py` directly.
 
 | Route | Returns |
@@ -268,13 +269,21 @@ flowchart LR
 ### Key caching
 
 Tracker keys are fixed when a tracker is paired, so `src/airtags.py` caches them in
-`.icloud_session/trackers.json` (chmod 600) and only touches the Keychain on first run or with `--refresh-keys`. The
-cache also stores each tracker's rolling-key *alignment* — the index of its most recent report — which
-`fetch_location()` advances in place. Without that, an accessory whose local record has no `KeyAlignmentRecord` falls
-back to its pairing date and rescans weeks of keys on every run.
+`.icloud_session/trackers.json` (mode 400) and only touches the Keychain on first run or with `--refresh-keys`.
+That file is read-only on every other path, including the poller's — `--refresh-keys` is the one thing that
+rewrites it, and it stages to a temp file and renames, so an interrupted write can't leave a half-file where the
+master keys were.
+
+Each tracker's rolling-key *alignment* — the index of its most recent report, which locating advances in place —
+does change every cycle, so it lives in the `tracker_alignment` table instead. Without it, an accessory falls back
+to its pairing date and rescans weeks of keys on every run. It is only a cache: a missing row falls back to
+whatever `trackers.json` carries, and a database error is logged and skipped rather than failing the lookup, since
+`findmy airtags`/`findmy all` locate without opening a database at all.
 
 **Tradeoff:** this writes tracker master keys to plaintext on disk. Anyone with that file can locate those trackers
-indefinitely. It stays inside the git-ignored session directory at mode 600; delete it to fall back to the Keychain.
+indefinitely. It stays inside the git-ignored session directory at mode 400; delete it to fall back to the
+Keychain. They are deliberately kept out of `data/findmy.db`, which the R2 and git backup jobs sweep up — git
+history is append-only, and a master key is fixed at pairing, so a leaked one cannot be rotated.
 
 ### Moving to another Mac
 
