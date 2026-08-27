@@ -165,7 +165,6 @@ def test_put_icon_for_unknown_device_is_404(client):
 def test_put_icon_rejects_missing_body(client, seed):
     seed(make_item("tag-1", make_location(52.5, 13.4)))
 
-    # An empty body used to silently clear the icon instead of 400-ing.
     assert client.put("/locations/tag-1/icon").status_code == 400
 
 

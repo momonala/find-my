@@ -1,15 +1,13 @@
 """Tests for src/airtags.py's tracker key cache, alignment, and VM recycling.
 
 The master keys in `.icloud_session/trackers.json` cannot be regenerated on a
-non-macOS host, so the properties worth pinning are that nothing on the poll
-path writes that file, that the one path which does write it cannot leave a
-partial file behind, and that the alignment cache survives a round trip through
-the database.
+non-macOS host, so what is pinned here is that nothing on the poll path writes
+that file, that the one path which does cannot leave a partial file behind, and
+that the alignment cache round-trips through the database.
 
-The Anisette provider is covered separately at the bottom: the real one is an
-emulated ARM VM that takes seconds to build and needs a provisioned session, so
-it is stubbed, and what is asserted is *when* a new one is built and that the
-old one becomes unreachable.
+The Anisette provider is stubbed -- the real one is an emulated ARM VM needing a
+provisioned session -- so the assertions are about when a new one is built and
+that the old one becomes unreachable.
 """
 
 import os
@@ -65,7 +63,7 @@ def test_saving_leaves_no_temp_file_behind(session_dir):
 
 
 def test_a_failed_save_leaves_the_previous_keys_intact(session_dir, monkeypatch):
-    """The whole point of staging: a crash mid-write must not destroy the keys."""
+    """A crash mid-write must not destroy keys a Linux host cannot regenerate."""
     airtags._save_trackers([make_accessory("ID-original")])
     original = airtags._TRACKERS_FILE.read_text()
 
@@ -82,7 +80,7 @@ def test_a_failed_save_leaves_the_previous_keys_intact(session_dir, monkeypatch)
 
 
 def test_a_read_only_cache_can_still_be_refreshed(session_dir):
-    """0o400 must not wedge --refresh-keys: os.replace needs the directory, not the file."""
+    """0o400 must not wedge --refresh-keys: the rename needs the directory, not the file."""
     airtags._save_trackers([make_accessory("ID-old")])
 
     airtags._save_trackers([make_accessory("ID-new")])
@@ -192,11 +190,9 @@ def test_alignment_failures_are_logged_not_silent(session_dir, monkeypatch, capl
 
 
 class _StubProvider:
-    """Stands in for a LocalAnisetteProvider, tagged so rebuilds are visible.
+    """Stands in for a LocalAnisetteProvider, serialed so rebuilds are visible.
 
-    `_ani` stands in for the emulator VM the real provider builds lazily; the
-    recycling path must clear it rather than rely on the provider being
-    collected, so it is asserted on directly.
+    `_ani` stands in for the emulator VM the real provider builds lazily.
     """
 
     def __init__(self, serial: int) -> None:
@@ -207,9 +203,8 @@ class _StubProvider:
 def _stub_provider_factory(monkeypatch) -> list[int]:
     """Replace provider construction with a stub, returning one serial per build.
 
-    Serials rather than the providers themselves: holding the objects here would
-    keep discarded ones alive, which is precisely what
-    `test_dropped_provider_is_not_referenced_elsewhere` asserts cannot happen.
+    Serials, not the providers themselves -- holding the objects would keep
+    discarded ones alive and defeat the reachability test below.
     """
     built: list[int] = []
 
@@ -264,13 +259,9 @@ def test_rebuilding_starts_a_fresh_budget(monkeypatch):
 
 
 def test_real_provider_still_has_the_attribute_the_fix_pokes():
-    """Guard against the upstream rename that would silently un-fix the leak.
-
-    The recycling path clears `LocalAnisetteProvider._ani` by name. The tests
-    around it use a stub that defines `_ani` itself, so they would keep passing
-    while production quietly regressed to accumulating VMs -- this asserts
-    against the real class instead. Constructing one is cheap and offline: its
-    __init__ deliberately defers building the emulator.
+    """The recycling path clears `LocalAnisetteProvider._ani` by name, and the stub
+    above would survive an upstream rename -- so check the real class. Cheap and
+    offline: its __init__ defers building the emulator.
     """
     provider = airtags.LocalAnisetteProvider(libs_path=airtags._ANISETTE_LIBS)
 
@@ -278,11 +269,8 @@ def test_real_provider_still_has_the_attribute_the_fix_pokes():
 
 
 def test_recycling_releases_the_vm_without_waiting_for_collection(monkeypatch):
-    """Clearing `_ani` is what caps memory at one live VM.
-
-    Leaving it to the garbage collector keeps the outgoing VM resident for an
-    extra cycle, because `Closable.__del__` resurrects the provider into a task
-    on the shared event loop.
+    """Clearing `_ani` caps memory at one live VM: left to the collector,
+    `Closable.__del__` resurrects the provider and holds its VM a cycle longer.
     """
     _stub_provider_factory(monkeypatch)
 
@@ -296,8 +284,7 @@ def test_recycling_releases_the_vm_without_waiting_for_collection(monkeypatch):
 
 
 def test_dropped_provider_is_not_referenced_elsewhere(monkeypatch):
-    """The rebuild only reclaims memory if the module's reference was the last
-    one, so the discarded provider must actually become unreachable."""
+    """The rebuild only reclaims memory if the module held the last reference."""
     import gc
     import weakref
 

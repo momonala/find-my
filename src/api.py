@@ -271,9 +271,8 @@ def create_app(start_poller: bool = True) -> Flask:
         with connection() as conn:
             if not set_device_icon(conn, device_id, emoji):
                 abort(404)
-            # Re-read so the response goes through the same serializer as GET
-            # rather than echoing back the raw submitted value. Guaranteed
-            # non-None: set_device_icon just confirmed the device exists, and
+            # Re-read so the response goes through the same serializer as GET.
+            # Non-None: set_device_icon just confirmed the device exists, and
             # nothing else can delete it out from under this same connection.
             row = latest_location_for(conn, device_id)
             assert row is not None

@@ -157,9 +157,8 @@ async def locate_accessories(
 
     _apply(await _fetch(account, probe), owners, newest)
 
-    # Round 2: sweep the rest of the window for whoever stayed silent. Batching
-    # every remaining group into one sweep is what keeps a dead tracker from
-    # costing a dozen serial round trips.
+    # Round 2: sweep the rest of the window for whoever stayed silent, batching
+    # every remaining group into one request rather than one per key range.
     sweep: list[_KeyGroup] = []
     for accessory in accessories:
         if accessory in newest or resume[accessory] < oldest[accessory]:

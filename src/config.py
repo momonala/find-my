@@ -44,9 +44,8 @@ _VALUES: dict[str, Any] = {
 app = typer.Typer(add_completion=False)
 
 
-# Keys arrive as unparsed extra args rather than declared options so that this
-# stays driven by `_VALUES` alone -- declaring one boolean flag per key means
-# every new config value has to be added in two places and kept in sync.
+# Keys arrive as unparsed extra args, not declared options, so `_VALUES` stays
+# the only place a new config key has to be registered.
 @app.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 def config_cli(
     ctx: typer.Context,

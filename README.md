@@ -17,7 +17,7 @@ On top of the CLI, `uv run findmy serve` runs a small read-only HTTP API and das
 once-a-minute background poller and a SQLite history — see [Serving an HTTP API and
 dashboard](#serving-an-http-api-and-dashboard).
 
-Last Updated: 2026-08-12
+Last Updated: 2026-08-27
 
 ## Prerequisites
 
@@ -323,18 +323,16 @@ the 9.1s — is single-threaded rolling-key derivation, not network time.
 Expect memory to climb by a few MB per hour and then drop back — repeatedly, forever. That saw-tooth is deliberate;
 the underlying growth is not, and it is not a leak in this codebase (the Python heap is flat).
 
-Every Anisette header generation re-enters the emulated ARM library, and each entry appends ~40–50 kB to Unicorn's
-JIT translation buffer, which QEMU only reclaims when its 1 GiB region flushes. One header is generated per request
-to Apple, so at a 60-second poll interval an untouched process grew 50–110 MB/day without bound, heading for ~1.2 GB
-RSS in a week or two. The `anisette` library ships its own mitigation for this — it restarts the VM when a guest
-allocator passes 50% — but it watches guest-allocator utilisation, which sits near 0.1% under this workload, so it
-never fires.
+Every Anisette header generation re-enters the emulated ARM library and appends ~40–50 kB to Unicorn's JIT
+translation buffer, which QEMU only reclaims when its 1 GiB region flushes. One header goes out per request to
+Apple, so a process that keeps one VM alive grows ~69 MB/day without bound. `anisette` ships a mitigation that
+restarts the VM when a guest allocator passes 50%, but guest-allocator utilisation sits near 0.1% under this
+workload, so it never fires.
 
-So `_get_anisette_provider` in `src/airtags.py` recycles the VM itself every `_ANISETTE_MAX_USES` header
-generations, which caps the buffer at ~10 MB and returns it to the OS. Two details there are load-bearing and
-documented in that function: the VM is released explicitly rather than left to the garbage collector, and the cyclic
-collector is invoked by hand. Getting either wrong doesn't merely fail to help — discarded VMs then accumulate and
-memory use ends up *worse* than leaving it alone.
+`_get_anisette_provider` in `src/airtags.py` therefore recycles the VM every `_ANISETTE_MAX_USES` generations,
+capping the buffer at ~10 MB. Two details in that function are load-bearing: the VM is released explicitly rather
+than left to the garbage collector, and the cyclic collector is invoked by hand. Dropping either doesn't merely fail
+to help — discarded VMs accumulate and memory use ends up *worse* than leaving it alone.
 
 Because that fix depends on `findmy` internals, `install/projects_find-my.service` also sets `MemoryMax=300M` with
 `Restart=always` as a backstop: if an upstream change ever stops the recycling working, the failure mode is

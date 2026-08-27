@@ -385,8 +385,8 @@ def log_alert_event(conn: sqlite3.Connection, alert_id: int, triggered_at: str) 
 def load_tracker_alignment(conn: sqlite3.Connection) -> dict[str, tuple[str, int]]:
     """Return `{tracker_id: (alignment_date, alignment_index)}` for every tracker.
 
-    `tracker_id` is src/airtags.py's `_stable_id`. A tracker with no row yet is
-    simply absent; src/airtags.py treats that as "no cached alignment".
+    `tracker_id` is src/airtags.py's `_stable_id`. A tracker with no row is
+    absent rather than zeroed; callers treat that as "no cached alignment".
     """
     rows = conn.execute("SELECT tracker_id, alignment_date, alignment_index FROM tracker_alignment")
     return {row["tracker_id"]: (row["alignment_date"], row["alignment_index"]) for row in rows}
@@ -395,8 +395,8 @@ def load_tracker_alignment(conn: sqlite3.Connection) -> dict[str, tuple[str, int
 def save_tracker_alignment(conn: sqlite3.Connection, alignment: dict[str, tuple[str, int]]) -> None:
     """Upsert each tracker's alignment, as one transaction.
 
-    A plain overwrite is safe because alignment only moves forward:
-    `FindMyAccessory.update_alignment` discards anything older than what an
+    Overwriting is safe because alignment only moves forward:
+    `FindMyAccessory.update_alignment` discards anything older than the
     accessory already holds, so the caller's value is never staler than the row.
     """
     with conn:

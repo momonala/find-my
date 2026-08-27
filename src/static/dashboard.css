@@ -675,8 +675,8 @@ input:focus-visible {
 }
 
 /* Alert rows only -- kept off .device-subtitle's single line (see
-   alertTriggeredText() in dashboard.js) since that line's fixed width and
-   ellipsis were truncating it away entirely. */
+   alertTriggeredText() in dashboard.js), which is fixed-width and
+   ellipsis-truncated and has no room to share. */
 .device-triggered {
   font-size: 0.72rem;
   color: var(--color-text-muted);

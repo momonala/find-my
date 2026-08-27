@@ -98,8 +98,8 @@
   // Two banners, not one: `fatalBannerEl` holds a standing problem (map init
   // failed) that stays up across refreshes, while `errorBannerEl` holds a
   // per-refresh problem (some tracks failed to load) that the next successful
-  // refresh clears. Sharing one element meant loadTracks()'s first line wiped
-  // the map-init warning within a tick of it appearing.
+  // refresh clears. One shared element can't hold both: loadTracks() clears it
+  // on entry, which would drop a standing map-init warning.
 
   function showError(message) {
     errorBannerEl.textContent = message;
@@ -866,10 +866,10 @@
     if (MOBILE_QUERY.matches) setSidebarOpen(false);
   }
 
-  // --- Icon editor: a small focus-managed dialog instead of window.prompt ----
+  // --- Icon editor dialog ----------------------------------------------------
   //
-  // window.prompt is blocking, unstyleable, and doesn't return focus to the
-  // control that opened it. A <dialog> is created once and reused.
+  // Created once and reused. Focus is moved in on open and restored to the
+  // control that opened it on close.
 
   let iconDialog = null;
   let iconDialogInput = null;
@@ -968,8 +968,7 @@
   // <ul> as the device/item tabs, styled the same way) with a delete button
   // per row. Adding one goes through a single "Add alert" button that opens
   // a focus-managed <dialog>, built once and reused like the icon-editor
-  // dialog -- keeps the tab itself down to a list plus one button instead of
-  // a permanently-visible form. Evaluation itself happens server-side
+  // dialog. Evaluation itself happens server-side
   // (src/alerts.py, from the poller, with a cooldown between repeat
   // notifications for the same alert); the frontend only reads
   // `is_active`/`triggered_at` off GET /alerts and manages config.
@@ -993,10 +992,9 @@
     });
   }
 
-  // Kept separate from the "last triggered" time (below) rather than one
-  // combined string: the combined version got squeezed off the end of the
-  // single-line, ellipsis-truncated subtitle, making the triggered time
-  // effectively invisible. Splitting it onto its own line keeps it visible.
+  // Kept separate from the "last triggered" time (below): the subtitle is a
+  // single ellipsis-truncated line, so a combined string loses whichever half
+  // runs past the end.
   function alertStateText(alert) {
     if (RADIUS_ALERT_TYPES.has(alert.alert_type)) {
       if (isRadiusAlertAlarmed(alert)) return alert.alert_type === "enter" ? "Inside" : "Outside";
@@ -1014,9 +1012,8 @@
   }
 
   // Built on the same device-row/device-text/device-name/device-subtitle
-  // classes as buildDeviceRow(), minus the avatar button (an alert row
-  // isn't selectable or clickable), so the Alerts tab reads as the same
-  // list, not a bolted-on widget.
+  // classes as buildDeviceRow(), minus the avatar button -- an alert row
+  // isn't selectable or clickable.
   function buildAlertListRow(alert) {
     const li = document.createElement("li");
     li.className = "device-row alert-list-row";
@@ -1066,8 +1063,7 @@
   }
 
   // Built once and reused, same pattern as the icon-editor dialog: a <dialog>
-  // holding the device/type/threshold fields that used to sit permanently in
-  // the alert toolbar.
+  // holding the device/type/threshold fields.
   let alertDialog = null;
   let alertDialogDeviceSelect = null;
   let alertDialogTypeSelect = null;
@@ -1317,7 +1313,7 @@
 
   // cmd+click (ctrl+click on non-Mac) adds/removes a device from the current
   // selection instead of isolating it -- the only way to view more than one
-  // device's track at once now that there's no per-row checkbox.
+  // device's track at once.
   function toggleSelected(deviceId) {
     if (state.selected.has(deviceId)) {
       state.selected.delete(deviceId);

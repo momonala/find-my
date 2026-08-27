@@ -10,8 +10,8 @@ macOS Keychain prompt — so it must run at the console, not over SSH.
 Session state is cached in .icloud_session/ so 2FA isn't required on every run,
 and so are the tracker keys — they are fixed at pairing, and caching them keeps
 the Keychain prompt to first run only. Pass --refresh-keys after pairing a new
-tracker, which is the only thing that rewrites the key cache. Rolling-key
-alignment advances on every locate and is kept in the database instead.
+tracker; nothing else writes the key cache. Rolling-key alignment lives in the
+`tracker_alignment` table, not in that file.
 """
 
 import asyncio
@@ -112,15 +112,14 @@ def _stable_id(accessory: FindMyAccessory) -> str:
 def _save_trackers(trackers: list[FindMyAccessory]) -> None:
     """Write the tracker key cache. Reached only by `--refresh-keys`.
 
-    Staged and renamed rather than truncated in place, so an interrupted write
-    cannot leave a half-file where the master keys used to be. The temp name
-    carries the pid, so two concurrent refreshes race on the rename -- atomic,
-    loser simply overwritten -- instead of interleaving their writes.
+    Staged and renamed, so an interrupted write cannot truncate master keys a
+    non-macOS host cannot regenerate. The pid in the temp name keeps concurrent
+    refreshes off each other's staging file; they then race on an atomic rename.
 
-    The mode is set at creation, not chmod'ed afterwards, which would leave the
-    keys world-readable for the duration of the write. 0o400 is read-only even
-    to its owner: the rename needs write permission on the directory, not on
-    either file, so a later refresh can still supersede it.
+    The mode is set at creation rather than chmod'ed after, which would leave
+    the keys world-readable for the length of the write. 0o400 still permits a
+    later refresh: the rename needs write permission on the directory, not the
+    file.
     """
     payload = json.dumps([tracker.to_json() for tracker in trackers], indent=2)
     staged = _TRACKERS_FILE.with_suffix(f".{os.getpid()}.tmp")
@@ -137,16 +136,12 @@ def _save_trackers(trackers: list[FindMyAccessory]) -> None:
 def _apply_alignment(trackers: list[FindMyAccessory]) -> None:
     """Fast-forward each tracker's rolling-key alignment from the database.
 
-    Alignment records how far through a tracker's key rotation the last locate
-    got, so the next one resumes there instead of rescanning up to a week of
-    keys. It is a performance cache: `update_alignment` keeps whichever value is
-    newer, so a stale row or no row at all just falls back to whatever
-    `trackers.json` carries, at the cost of a slower sweep.
-
-    A database error is swallowed for the same reason. `findmy airtags` and
+    Alignment is how far through its key rotation a tracker was last seen;
+    without it a locate rescans up to a week of keys. Purely a cache, so every
+    miss degrades rather than fails: `update_alignment` keeps the newer value,
+    and a database error is logged and skipped -- `findmy airtags` and
     `findmy all` locate without ever calling `init_db()`, so the table may not
-    exist -- a cache must not be able to fail a lookup that would otherwise
-    succeed.
+    exist at all.
     """
     try:
         with connection() as conn:
@@ -166,13 +161,10 @@ def _apply_alignment(trackers: list[FindMyAccessory]) -> None:
 def _persist_alignment(trackers: list[FindMyAccessory]) -> None:
     """Record where this locate left each tracker's key rotation.
 
-    Reads the two fields directly: `findmy` exposes no getter, and its only
-    public alternative, `to_json()`, would hex-encode the master key, skn and
-    sks into fresh strings once a minute just to read an integer.
-    tests/test_airtags.py pins that both attributes still exist.
-
-    Failing to store the cache must not fail a locate that already succeeded,
-    so a database error is logged and dropped -- see `_apply_alignment`.
+    Reads the two fields directly because `findmy` exposes no getter, and its
+    public `to_json()` would hex-encode the master key, skn and sks into fresh
+    strings once a minute just to read an integer. A database error is logged
+    and skipped, as in `_apply_alignment`.
     """
     alignment = {
         _stable_id(tracker): (
@@ -270,40 +262,25 @@ def _get_event_loop() -> asyncio.AbstractEventLoop:
 
 _anisette_provider: LocalAnisetteProvider | None = None
 _anisette_uses = 0
-# How many header generations one provider serves before it is rebuilt. Each
-# generation re-enters the emulated ARM library and appends ~40-50 kB to
-# Unicorn's JIT translation buffer, which QEMU only reclaims when its 1 GiB
-# region flushes -- so a provider kept forever grows unboundedly. 200 caps that
-# at roughly 10 MB, paid for with one VM rebuild every few hours.
+# Header generations per provider before the VM is rebuilt. Each generation
+# leaks ~40-50 kB of emulator JIT buffer; 200 caps that at ~10 MB for the price
+# of one rebuild every few hours. See "Why RAM saw-tooths" in README.md.
 _ANISETTE_MAX_USES = 200
 
 
 def _get_anisette_provider(state: dict) -> LocalAnisetteProvider:
     """Return the process-wide Anisette provider, rebuilt every `_ANISETTE_MAX_USES` uses.
 
-    Building one spins up a unicorn VM, so it is reused across poll cycles --
-    but not indefinitely, because the emulator's JIT buffer only shrinks when
-    the VM goes away. See "Why RAM saw-tooths" in the README. `anisette`'s own
-    VM-restart mechanism does not help: it fires on guest-allocator
-    utilisation, which sits near 0.1% under this workload against a 50%
-    threshold.
+    Building one spins up a unicorn VM, so it is reused across poll cycles. It
+    cannot be reused indefinitely: the emulator's JIT buffer only shrinks when
+    the VM is freed. Rebuilding from `state` picks up the provisioning data as
+    it is on disk now.
 
-    Rebuilding from `state` rather than clearing `_ani` in place means each new
-    VM starts from the provisioning data as it is on disk now.
-
-    Both teardown lines are load-bearing:
-
-    - Clearing `_ani` releases the VM directly. Left to the collector,
-      `findmy.util.abc.Closable.__del__` resurrects the provider into a task on
-      the shared event loop, holding its VM for one further cycle -- steady
-      state becomes two VMs, not one.
-    - `gc.collect()` is what frees it. The VM is reachable only through a
-      reference cycle (unicorn's hook callbacks close over the VM that owns the
-      `Uc` holding them), and the cyclic collector triggers on object *counts*,
-      which a VM barely moves while holding tens of MB behind a few objects.
-
-    Get either wrong and discarded VMs accumulate, making memory use worse than
-    no recycling at all.
+    Both teardown lines are required, and dropping either makes memory worse
+    than no recycling -- `Closable.__del__` resurrects a collected provider onto
+    the shared event loop, and the VM is only reachable through a reference
+    cycle the counts-based collector will not trigger on. See "Why RAM
+    saw-tooths" in README.md.
     """
     global _anisette_provider, _anisette_uses
     if _anisette_uses >= _ANISETTE_MAX_USES:
@@ -350,9 +327,8 @@ def fetch_airtags(refresh_keys: bool = False) -> list[TrackedItem]:
         return []
 
     locations = _get_event_loop().run_until_complete(_locate(accessories))
-    # Locating advances each accessory's alignment in place; persisting it keeps
-    # later runs from rescanning weeks of keys. It goes to the database, never
-    # back into the key cache.
+    # Locating advances alignment in place. It is persisted to the database,
+    # never back into the key cache.
     _persist_alignment(accessories)
 
     return [
