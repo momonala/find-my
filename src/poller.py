@@ -15,6 +15,7 @@ import threading
 
 from src.airtags import fetch_airtags
 from src.alerts import check_alerts
+from src.db import NO_COUNTS
 from src.db import connection
 from src.db import record_fetch
 from src.find_my import fetch_devices
@@ -37,14 +38,14 @@ def _poll_once() -> None:
             # Same connection/transaction as record_fetch, so a crash between the
             # two can't leave history written but that cycle's alerts unevaluated.
             check_alerts(conn, result.moved_device_ids)
-    items_written, items_fetched = result.counts.get("item", (0, 0))
-    devices_written, devices_fetched = result.counts.get("device", (0, 0))
+    item_counts = result.counts.get("item", NO_COUNTS)
+    device_counts = result.counts.get("device", NO_COUNTS)
     logger.info(
         "[%d/%d] items  [%d/%d] devices",
-        items_written,
-        items_fetched,
-        devices_written,
-        devices_fetched,
+        item_counts.written,
+        item_counts.fetched,
+        device_counts.written,
+        device_counts.fetched,
     )
 
 

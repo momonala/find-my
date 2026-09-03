@@ -8,6 +8,7 @@ name and port without duplicating them in shell. Secrets live in src/env.py.
 import tomllib
 from pathlib import Path
 from typing import Any
+from typing import NoReturn
 
 import typer
 
@@ -29,16 +30,12 @@ FLASK_PORT = _tool_config["flask_port"]
 SPYGLASS_HOST = _tool_config["spyglass_host"]
 SPYGLASS_DASHBOARD_URL = _tool_config["spyglass_dashboard_url"]
 
-# The single source of truth for the CLI below: one entry per exposed key, so
-# adding a config value means editing this dict and nothing else.
+# What the CLI below exposes. Derived from the parsed tables rather than
+# restated, so a new `[tool.config]` key needs no change here.
 _VALUES: dict[str, Any] = {
     "project_name": PROJECT_NAME,
     "project_version": PROJECT_VERSION,
-    "home_latitude": HOME_LATITUDE,
-    "home_longitude": HOME_LONGITUDE,
-    "flask_port": FLASK_PORT,
-    "spyglass_host": SPYGLASS_HOST,
-    "spyglass_dashboard_url": SPYGLASS_DASHBOARD_URL,
+    **_tool_config,
 }
 
 app = typer.Typer(add_completion=False)
@@ -53,9 +50,8 @@ def config_cli(
 ) -> None:
     """Print non-secret configuration from pyproject.toml.
 
-    Pass a key as either `--home-latitude` or `home_latitude`. Available keys:
-    project_name, project_version, home_latitude, home_longitude, flask_port,
-    spyglass_host, spyglass_dashboard_url.
+    Pass a key as either `--home-latitude` or `home_latitude`. Run with --all
+    to see every available key.
     """
     if show_all:
         for name, value in _VALUES.items():
@@ -64,17 +60,17 @@ def config_cli(
 
     requested = [argument.lstrip("-").replace("-", "_") for argument in ctx.args]
     unknown = [name for name in requested if name not in _VALUES]
-
-    if requested and not unknown:
-        for name in requested:
-            typer.echo(_VALUES[name])
-        return
-
     if unknown:
-        message = f"Error: unknown config key(s): {', '.join(unknown)}."
-    else:
-        message = "Error: no config key specified."
-    typer.secho(f"{message} Available keys: {', '.join(_VALUES)}.", fg=typer.colors.RED, err=True)
+        _fail(f"unknown config key(s): {', '.join(unknown)}.")
+    if not requested:
+        _fail("no config key specified.")
+
+    for name in requested:
+        typer.echo(_VALUES[name])
+
+
+def _fail(message: str) -> NoReturn:
+    typer.secho(f"Error: {message} Available keys: {', '.join(_VALUES)}.", fg=typer.colors.RED, err=True)
     raise typer.Exit(1)
 
 

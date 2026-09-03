@@ -13,9 +13,9 @@
 <body>
   <main class="map-shell">
     <div id="map" role="region" aria-label="Map of selected devices' locations over the chosen time range"></div>
-    <p id="track-empty" class="empty-state" hidden>No location history for the selected devices in this range.</p>
+    <p id="track-empty" class="empty-state" role="status" hidden>No location history for the selected devices in this range.</p>
 
-    <button type="button" id="sidebar-toggle" class="btn-floating sidebar-toggle" aria-label="Open menu" aria-controls="device-list" aria-expanded="false">
+    <button type="button" id="sidebar-toggle" class="btn-floating sidebar-toggle" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" width="18" height="18">
         <path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg>
@@ -42,32 +42,30 @@
       </button>
     </div>
 
-    <!-- Persistent problems (map init failed) that a track refresh should not
-         silently clear -- see clearError() in dashboard.js. -->
     <div class="banner-stack">
       <p id="fatal-banner" class="error-banner" role="alert" hidden></p>
       <p id="warning-banner" class="warning-banner" role="status" hidden></p>
       <p id="error-banner" class="error-banner" role="alert" hidden></p>
     </div>
 
-    <aside class="sidebar" aria-label="Devices and items">
+    <aside id="sidebar" class="sidebar" aria-label="Devices and items">
       <div class="tab-switcher" role="tablist" aria-label="Category">
         <span class="tab-switcher-pill" aria-hidden="true"></span>
-        <button type="button" class="tab-button" role="tab" id="tab-item" aria-controls="device-list" data-tab="item">
+        <button type="button" class="tab-button" role="tab" id="tab-item" aria-controls="device-list" data-tab="item" aria-selected="false" tabindex="-1">
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M3 3h8l10 10-8 8L3 11V3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
             <circle cx="7.5" cy="7.5" r="1.4" fill="currentColor"/>
           </svg>
           <span class="tab-label">Items</span>
         </button>
-        <button type="button" class="tab-button" role="tab" id="tab-device" aria-controls="device-list" data-tab="device">
+        <button type="button" class="tab-button" role="tab" id="tab-device" aria-controls="device-list" data-tab="device" aria-selected="false" tabindex="-1">
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <rect x="7" y="2" width="10" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>
             <circle cx="12" cy="18.2" r="1" fill="currentColor"/>
           </svg>
           <span class="tab-label">Devices</span>
         </button>
-        <button type="button" class="tab-button" role="tab" id="tab-alert" aria-controls="device-list" data-tab="alert">
+        <button type="button" class="tab-button" role="tab" id="tab-alert" aria-controls="device-list" data-tab="alert" aria-selected="false" tabindex="-1">
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M12 3l10 18H2L12 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
             <line x1="12" y1="9.5" x2="12" y2="14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>

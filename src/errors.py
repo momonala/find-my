@@ -1,10 +1,8 @@
 """Domain errors raised by the fetch layer.
 
-`src/find_my.py`, `src/airtags.py` and `src/tracking.py` are shared by two very
-different callers: the interactive CLI (`src/cli.py`) and the Flask API's
-background poller (`src/poller.py`). Raising `typer.Exit` from that shared code
-would be wrong for the poller -- it runs on a daemon thread with no terminal to
-exit -- so the fetch layer raises these instead and `src/cli.py` is the only
+The fetch modules are shared by the interactive CLI and the API's background
+poller, so they can't raise `typer.Exit` -- the poller runs on a daemon thread
+with no terminal to exit. They raise these instead, and src/cli.py is the only
 place that turns them into console output and an exit code.
 """
 
@@ -38,8 +36,8 @@ class TwoFactorRejectedError(FindMyError):
 class UnsupportedPlatformError(FindMyError):
     """The operation requires macOS 14+.
 
-    AirTag key refresh reads the macOS Keychain and Find My library paths that
-    don't exist on Linux or older macOS. Initial Anisette session setup also
-    requires downloading Apple-native binaries that only work on macOS 14+.
-    Pre-seed .icloud_session/ from a Mac and copy trackers.json here instead.
+    AirTag key refresh reads Keychain and Find My library paths that don't
+    exist elsewhere, and initial Anisette setup downloads Apple-native binaries
+    that only run on macOS 14+. Pre-seed .icloud_session/ and trackers.json
+    from a Mac instead.
     """

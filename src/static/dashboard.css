@@ -38,6 +38,11 @@
   --duration-fast: 325ms;
   --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
   --modal-scale: 0.96;
+  /* The mobile drawer gets its own pair: a longer travel with a sharper
+     decelerating curve than the in-place transitions above. */
+  --duration-drawer: 364ms;
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --duration-battery-pulse: 1560ms;
 }
 
 * {
@@ -197,43 +202,6 @@ input:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.map-style-dialog-title {
-  margin: 0 0 var(--space-3);
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.map-style-select {
-  font: inherit;
-  font-size: 0.9rem;
-  width: 100%;
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  color: var(--color-text);
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-  transition: border-color var(--duration-quick) var(--ease-smooth-out);
-}
-
-.map-style-select:hover,
-.map-style-select:focus {
-  border-color: var(--color-accent);
-}
-
-.map-style-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 0.9rem;
-  color: var(--color-text);
-  padding: var(--space-2) 0;
-  cursor: default;
 }
 
 .toggle-switch {
@@ -653,7 +621,7 @@ input:focus-visible {
 
 .battery-dot--very-low {
   background: var(--color-danger);
-  animation: battery-pulse 1.56s ease-in-out infinite;
+  animation: battery-pulse var(--duration-battery-pulse) ease-in-out infinite;
 }
 
 @keyframes battery-pulse {
@@ -694,9 +662,12 @@ input:focus-visible {
   text-align: center;
 }
 
-/* --- Icon editor dialog -------------------------------------------------- */
+/* --- Dialogs -------------------------------------------------------------
+   The icon editor, map style picker and alert editor are all <dialog>s built
+   by the shared helpers in dashboard.js, so they share one set of styles here.
+   Only genuinely per-dialog differences get their own rule below. */
 
-.icon-dialog {
+.app-dialog {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
@@ -706,7 +677,7 @@ input:focus-visible {
   min-width: 260px;
 }
 
-.icon-dialog::backdrop {
+.app-dialog::backdrop {
   background: rgba(0, 0, 0, 0.5);
 }
 
@@ -722,8 +693,7 @@ input:focus-visible {
 
    `display` and `overlay` need allow-discrete or the dialog would leave the
    top layer on frame one and the close animation would never be seen. */
-.icon-dialog,
-.alert-dialog {
+.app-dialog {
   opacity: 0;
   transform: scale(var(--modal-scale));
   transition:
@@ -733,8 +703,7 @@ input:focus-visible {
     overlay var(--duration-quick) allow-discrete;
 }
 
-.icon-dialog[open],
-.alert-dialog[open] {
+.app-dialog[open] {
   opacity: 1;
   transform: scale(1);
   transition:
@@ -744,16 +713,14 @@ input:focus-visible {
     overlay var(--duration-fast) allow-discrete;
 }
 
-.icon-dialog::backdrop,
-.alert-dialog::backdrop {
+.app-dialog::backdrop {
   opacity: 0;
   transition:
     opacity var(--duration-quick) var(--ease-smooth-out),
     display var(--duration-quick) allow-discrete;
 }
 
-.icon-dialog[open]::backdrop,
-.alert-dialog[open]::backdrop {
+.app-dialog[open]::backdrop {
   opacity: 1;
   transition:
     opacity var(--duration-fast) var(--ease-smooth-out),
@@ -761,72 +728,44 @@ input:focus-visible {
 }
 
 @starting-style {
-  .icon-dialog[open],
-  .alert-dialog[open] {
+  .app-dialog[open] {
     opacity: 0;
     transform: scale(var(--modal-scale));
   }
 
-  .icon-dialog[open]::backdrop,
-  .alert-dialog[open]::backdrop {
+  .app-dialog[open]::backdrop {
     opacity: 0;
   }
 }
 
-.icon-dialog-label {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  font-size: 0.85rem;
-}
-
-.icon-dialog-input {
-  font: inherit;
-  font-size: 1.1rem;
-  background: var(--color-bg);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: var(--space-2) var(--space-3);
-}
-
-.icon-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-}
-
-/* --- Add-alert dialog: same look as the icon-editor dialog --------------- */
-
-.alert-dialog {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  color: var(--color-text);
-  box-shadow: var(--shadow-md);
-  padding: var(--space-4);
-  min-width: 260px;
-}
-
-.alert-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.5);
-}
-
-.alert-dialog form {
+.dialog-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
-.alert-dialog-label {
+.dialog-field {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   font-size: 0.85rem;
 }
 
-.alert-dialog-select {
+.dialog-section-title {
+  margin: 0 0 var(--space-3);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dialog-section-title:not(:first-child) {
+  margin-top: var(--space-4);
+}
+
+.dialog-input,
+.dialog-select {
   font: inherit;
   font-size: 0.9rem;
   background: var(--color-bg);
@@ -834,6 +773,44 @@ input:focus-visible {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: var(--space-2);
+  transition: border-color var(--duration-quick) var(--ease-smooth-out);
+}
+
+.dialog-select {
+  width: 100%;
+  cursor: pointer;
+}
+
+.dialog-select:hover,
+.dialog-select:focus {
+  border-color: var(--color-accent);
+}
+
+/* Holds a single emoji, so it gets more room than a normal field. */
+.icon-dialog-input {
+  font-size: 1.1rem;
+  padding: var(--space-2) var(--space-3);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.alert-dialog .dialog-actions {
+  margin-top: 0;
+}
+
+.dialog-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  padding: var(--space-2) 0;
+  cursor: default;
 }
 
 .alert-threshold-wrap {
@@ -843,13 +820,6 @@ input:focus-visible {
 }
 
 .alert-threshold-input {
-  font: inherit;
-  font-size: 0.9rem;
-  background: var(--color-bg);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: var(--space-2);
   width: 72px;
 }
 
@@ -858,17 +828,11 @@ input:focus-visible {
   color: var(--color-text-muted);
 }
 
-.alert-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
 /* An alert row reuses .device-row/.device-text/.device-name/.device-subtitle
-   directly (see buildAlertListRow in dashboard.js) -- only these two rules
-   are alert-specific: the delete button takes the avatar-button's place,
-   and .device-text needs its own flex-grow since it's not wrapped in the
-   device row's .device-main button here. */
+   directly (see buildAlertListRow in dashboard.js), so the Alerts tab reads as
+   the same list. The rules below are only what differs: a delete button in the
+   avatar button's place, .device-text carrying its own flex-grow since nothing
+   wraps it here, and the enter/remove/press states device rows don't have. */
 .alert-list-row {
   cursor: pointer;
   transition: background-color var(--duration-quick) var(--ease-smooth-out);
@@ -1027,7 +991,7 @@ input:focus-visible {
     max-height: 100vh;
     border-radius: 0;
     transform: translateX(-100%);
-    transition: transform 0.364s cubic-bezier(0.32, 0.72, 0, 1);
+    transition: transform var(--duration-drawer) var(--ease-drawer);
   }
 
   .sidebar.is-open {
@@ -1047,7 +1011,8 @@ input:focus-visible {
     overflow-x: auto;
   }
 
-  .map-toolbar .field {
+  .map-toolbar .field,
+  .map-toolbar select {
     flex: 0 1 auto;
     min-width: 0;
   }
@@ -1062,11 +1027,6 @@ input:focus-visible {
     width: calc(var(--toolbar-height) * 0.85);
   }
 
-  .map-toolbar select {
-    flex: 0 1 auto;
-    min-width: 0;
-  }
-
   .banner-stack {
     left: var(--space-2);
     right: var(--space-2);
@@ -1075,49 +1035,28 @@ input:focus-visible {
 }
 
 /* --- Reduced motion ------------------------------------------------------
-   One block for the whole sheet rather than a guard per transition, so
-   anything added above is covered by default instead of by remembering.
-   Scoped to this app's own selectors -- deliberately not a `*` sweep, which
-   would also disable Leaflet's internal pan/zoom animations.
+   Every transition in this sheet is timed by a duration token, so zeroing the
+   tokens disables the lot -- including anything added later -- with no
+   selector list to keep in sync and nothing to out-rank. Positional and state
+   changes still happen, they just arrive instantly.
 
-   Positional and state changes still happen, they just arrive instantly. The
-   very-low battery pulse is dropped to its opaque keyframe: the dot stays
-   visible and red, it just stops flashing for attention. */
+   Scoped to this app's own tokens rather than a `*` sweep, which would also
+   kill Leaflet's internal pan/zoom animations.
+
+   The two animations left below are the ones whose duration doesn't come from
+   a token: the battery pulse (dropped to its opaque keyframe, so the dot stays
+   visible and red and just stops flashing) and the alert ring's marching
+   dashes (timed per ring from dashboard.js). */
 
 @media (prefers-reduced-motion: reduce) {
-  .leaflet-control-zoom a,
-  .btn-floating,
-  .map-style-select,
-  .toggle-switch,
-  .toggle-switch::after,
-  .error-banner,
-  .warning-banner,
-  .empty-state,
-  .sidebar,
-  .tab-switcher-pill,
-  .tab-button,
-  .sort-chip,
-  .btn-ghost,
-  .device-row,
-  .avatar-button .avatar,
-  .battery-dot,
-  .icon-dialog,
-  .icon-dialog::backdrop,
-  .icon-dialog[open],
-  .icon-dialog[open]::backdrop,
-  .alert-dialog,
-  .alert-dialog::backdrop,
-  .alert-dialog[open],
-  .alert-dialog[open]::backdrop,
-  .alert-list-row,
-  .alert-list-row.is-removing,
-  .alert-delete-button {
-    transition: none !important;
+  :root {
+    --duration-quick: 0ms;
+    --duration-fast: 0ms;
+    --duration-drawer: 0ms;
   }
 
   .battery-dot--very-low,
-  .alert-radius,
-  .alert-list-row.is-entering {
-    animation: none !important;
+  .alert-radius {
+    animation: none;
   }
 }

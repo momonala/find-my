@@ -1,29 +1,23 @@
-"""SQLite persistence for the Flask API: current devices, location history,
-user-assigned marker emoji, and configured alerts.
+"""SQLite persistence for the Flask API.
 
-Five tables: `devices` holds the latest known metadata per device (upserted
-on every poll), `location_history` holds one row per fix but only when a
-fix's coordinates differ from the previously stored one for that device --
-repeated identical reports from Apple's network don't grow the table --
-`device_icons` holds an optional emoji per device, set via the API rather
-than fetched from Apple (see src/api.py's PUT /locations/<id>/icon -- Apple
-doesn't expose the per-item emoji you pick in the Find My app to either
-`pyicloud` or `findmy`), `alerts` holds user-configured movement/enter/exit
-alerts and their current `is_active` state, and `alert_events` holds one row
-per time an alert actually fired -- kept separate from `alerts` so config/
-current-state and trigger history don't share a row (see
-migrations/versions/0003_alert_events.py). Both are evaluated by
-src/alerts.py from the background poller. See src/poller.py for what writes
-here and src/api.py for what reads it.
+Five tables. `devices` holds the latest metadata per device, upserted every
+poll. `location_history` holds one row per fix, written only when a fix's
+coordinates differ from the previously stored one -- repeated identical
+reports from Apple's network don't grow the table. `device_icons` holds an
+optional marker emoji per device, set through the API rather than fetched
+from Apple, which exposes the emoji you pick in the Find My app to neither
+`pyicloud` nor `findmy`. `alerts` holds user-configured alerts and their
+current `is_active` state, and `alert_events` one row per firing, kept apart
+so config and trigger history don't share a row.
 
-Schema itself is owned by Alembic (see migrations/) -- init_db() below runs
-`alembic upgrade head` rather than issuing DDL directly. Everything else in
-this module still talks to sqlite the plain way, through get_connection/
-connection; Alembic is only ever invoked for schema changes, never for reads
-or writes of actual data.
+Schema is owned by Alembic (see migrations/) -- init_db() runs `alembic
+upgrade head` rather than issuing DDL. Everything else here talks to sqlite
+directly through get_connection/connection; Alembic never reads or writes
+application data.
 """
 
 import sqlite3
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC
@@ -46,10 +40,6 @@ _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 # A write from the API (PUT /icon) can land while the poller is mid-write. Wait
 # for the lock instead of failing the request with "database is locked".
 _BUSY_TIMEOUT_MS = 5000
-
-# No ON DELETE CASCADE on alerts.device_id, and this connection never sets
-# PRAGMA foreign_keys=ON -- both fine today since no route deletes a device
-# row, but worth knowing if one ever gets added.
 
 # One row per device: its most recent location_history fix, if it has any.
 _LATEST_PER_DEVICE = """
@@ -116,6 +106,16 @@ def init_db(path: Path | None = None) -> None:
     command.upgrade(config, "head")
 
 
+class SourceCounts(NamedTuple):
+    """How many of a source's fetched items got a new history row written."""
+
+    written: int
+    fetched: int
+
+
+NO_COUNTS = SourceCounts(written=0, fetched=0)
+
+
 class FetchResult(NamedTuple):
     """What a poll cycle did: write counts per source, and which devices moved.
 
@@ -124,7 +124,7 @@ class FetchResult(NamedTuple):
     only re-evaluate alerts where something could actually have changed.
     """
 
-    counts: dict[str, tuple[int, int]]
+    counts: dict[str, SourceCounts]
     moved_device_ids: set[str]
 
 
@@ -134,19 +134,17 @@ def record_fetch(conn: sqlite3.Connection, items: list[TrackedItem]) -> FetchRes
     The whole cycle is one transaction, so a failure partway through a batch
     rolls back rather than leaving some devices updated and others not.
 
-    `counts` holds, per `item.source` ("device" or "item"), how many of the
-    fetched items actually got a new history row written versus how many were
-    fetched -- src.poller logs this so a poll cycle's console line shows write
-    volume, not just fetch volume.
+    `counts` is keyed by `item.source` ("device" or "item") -- src.poller logs
+    it so a poll cycle's console line shows write volume, not just fetch volume.
     """
     now = datetime.now(UTC).isoformat()
-    counts: dict[str, list[int]] = {}
+    fetched: Counter[str] = Counter()
+    written: Counter[str] = Counter()
     moved_device_ids: set[str] = set()
 
     with conn:
         for item in items:
-            counts.setdefault(item.source, [0, 0])
-            counts[item.source][0] += 1
+            fetched[item.source] += 1
 
             conn.execute(
                 """
@@ -186,11 +184,13 @@ def record_fetch(conn: sqlite3.Connection, items: list[TrackedItem]) -> FetchRes
                         now,
                     ),
                 )
-                counts[item.source][1] += 1
+                written[item.source] += 1
                 moved_device_ids.add(item.id)
 
     return FetchResult(
-        counts={source: (written, fetched) for source, (fetched, written) in counts.items()},
+        counts={
+            source: SourceCounts(written=written[source], fetched=count) for source, count in fetched.items()
+        },
         moved_device_ids=moved_device_ids,
     )
 
@@ -202,9 +202,8 @@ def all_latest_locations(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 def latest_location_for(conn: sqlite3.Connection, device_id: str) -> sqlite3.Row | None:
     """The device's latest fix, or None if `device_id` is unknown."""
-    # sqlite3.Cursor.fetchone() is typed to return Any (its type depends on the
-    # connection's row_factory, which mypy can't see); get_connection() always
-    # sets sqlite3.Row, so this is a type-annotation cast, not a runtime check.
+    # fetchone() is typed Any because its type follows the connection's
+    # row_factory, which get_connection always sets to sqlite3.Row.
     return cast(
         "sqlite3.Row | None",
         conn.execute(f"{_DEVICE_WITH_LATEST_FIX} WHERE d.id = ?", (device_id,)).fetchone(),
@@ -356,8 +355,8 @@ def get_alert(conn: sqlite3.Connection, alert_id: int) -> sqlite3.Row | None:
 def remove_alert(conn: sqlite3.Connection, alert_id: int) -> bool:
     """Remove an alert. Returns False if `alert_id` is unknown.
 
-    Named `remove_alert` rather than `delete_alert` so the DELETE route in
-    src/api.py can be named `delete_alert` without shadowing this import.
+    Named `remove_alert` so src/api.py's DELETE route can be `delete_alert`
+    without shadowing this import.
     """
     with conn:
         cursor = conn.execute("DELETE FROM alerts WHERE id = ?", (alert_id,))

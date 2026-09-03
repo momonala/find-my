@@ -61,8 +61,7 @@ def airtags_command(
     refresh_keys: bool = _RefreshOption,
 ) -> None:
     """Locate AirTags and other Find My network trackers paired to this Mac."""
-    _require_macos_for_keychain(refresh_keys)
-    _warn_if_keychain_needed(refresh_keys)
+    _prepare_keychain_access(refresh_keys)
     _report(lambda: fetch_airtags(refresh_keys), title="AirTags", sort=sort, as_json=as_json)
 
 
@@ -73,8 +72,7 @@ def all_command(
     refresh_keys: bool = _RefreshOption,
 ) -> None:
     """Locate everything: devices and trackers in one table."""
-    _require_macos_for_keychain(refresh_keys)
-    _warn_if_keychain_needed(refresh_keys)
+    _prepare_keychain_access(refresh_keys)
     _report(
         lambda: fetch_devices() + fetch_airtags(refresh_keys),
         title="Find My items",
@@ -100,6 +98,8 @@ def serve_command(
     pass --no-poll and run `findmy poll` as its own service, so exactly one
     process writes to the database.
     """
+    # Imported here, not at module scope, so plain lookups (`findmy devices`)
+    # don't pay to import Flask and wire up telemetry.
     from src.api import create_app
 
     _configure_server_logging()
@@ -128,8 +128,7 @@ def poll_command() -> None:
 @app.command("refresh-keys")
 def refresh_keys_command() -> None:
     """Re-read tracker keys from the Keychain without locating anything."""
-    _require_macos_for_keychain(refresh_keys=True)
-    _warn_if_keychain_needed(refresh_keys=True)
+    _prepare_keychain_access(refresh_keys=True)
     trackers = load_trackers(refresh_keys=True)
     typer.secho(f"Cached keys for {len(trackers)} trackers.", fg=typer.colors.GREEN)
 
@@ -153,9 +152,16 @@ def _configure_server_logging() -> None:
     logging.getLogger("pyicloud").setLevel(logging.WARNING)
 
 
-def _require_macos_for_keychain(refresh_keys: bool) -> None:
-    """Exit with a clear error if a Keychain operation is requested on a non-Mac."""
-    if (refresh_keys or not has_cached_keys()) and not is_macos_14_plus():
+def _prepare_keychain_access(refresh_keys: bool) -> None:
+    """Warn that the Keychain is about to be read, or exit if this host can't.
+
+    Raises:
+        typer.Exit: If keys have to come from the Keychain but this isn't macOS 14+.
+    """
+    if not refresh_keys and has_cached_keys():
+        return
+
+    if not is_macos_14_plus():
         typer.secho(
             "Tracker key operations require macOS 14+. "
             "Run this command on the Mac, then copy .icloud_session/ and trackers.json here.",
@@ -164,10 +170,7 @@ def _require_macos_for_keychain(refresh_keys: bool) -> None:
         )
         raise typer.Exit(1)
 
-
-def _warn_if_keychain_needed(refresh_keys: bool) -> None:
-    if refresh_keys or not has_cached_keys():
-        typer.echo("Reading tracker keys from this Mac's Find My data (may prompt for Keychain access)...")
+    typer.echo("Reading tracker keys from this Mac's Find My data (may prompt for Keychain access)...")
 
 
 def main() -> None:

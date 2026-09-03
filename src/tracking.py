@@ -86,9 +86,9 @@ def require_credentials() -> tuple[str, str]:
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance between two points, in meters.
 
-    This is the project's only haversine -- the dashboard reads `distance_m`
-    off the API rather than recomputing it, and src/alerts.py's movement
-    check reuses this rather than a second implementation.
+    The project's only haversine: src/alerts.py's movement check and the API's
+    `distance_m` (which the dashboard displays rather than recomputing) both
+    come through here.
     """
     rad_lat1, rad_lon1 = math.radians(lat1), math.radians(lon1)
     rad_lat2, rad_lon2 = math.radians(lat2), math.radians(lon2)

@@ -60,8 +60,9 @@ def _build_groups(
 ) -> tuple[list[_KeyGroup], int]:
     """Chunk `accessory`'s keys from `start_index` down to `stop_index` into groups.
 
-    Returns the groups and the index to resume from, so a later round can pick up
-    where a capped one left off.
+    Records every chunked key in `owners` (mutated in place) so `_apply` can
+    attribute the returned reports. Returns the groups and the index to resume
+    from, so a later round can pick up where a capped one left off.
     """
     groups: list[_KeyGroup] = []
     primary: list[str] = []
@@ -74,8 +75,8 @@ def _build_groups(
 
         keys = accessory.keys_at(index)
         # Mirrors findmy: anything that is not PRIMARY is queried as secondary.
-        new_primary = [k for k in keys if k.key_type == KeyPairType.PRIMARY]
-        new_secondary = [k for k in keys if k.key_type != KeyPairType.PRIMARY]
+        new_primary = [key for key in keys if key.key_type == KeyPairType.PRIMARY]
+        new_secondary = [key for key in keys if key.key_type != KeyPairType.PRIMARY]
 
         would_overflow = (
             len(primary) + len(new_primary) > _MAX_KEYS_PER_GROUP
@@ -88,8 +89,8 @@ def _build_groups(
 
         for key in keys:
             owners[key.hashed_adv_key_bytes] = (accessory, key, index)
-        primary.extend(k.hashed_adv_key_b64 for k in new_primary)
-        secondary.extend(k.hashed_adv_key_b64 for k in new_secondary)
+        primary.extend(key.hashed_adv_key_b64 for key in new_primary)
+        secondary.extend(key.hashed_adv_key_b64 for key in new_secondary)
         index -= 1
 
     if primary or secondary:
@@ -102,8 +103,8 @@ async def _fetch(account: AsyncAppleAccount, groups: list[_KeyGroup]) -> list[Lo
     reports: list[LocationReport] = []
     for start in range(0, len(groups), _MAX_GROUPS_PER_REQUEST):
         chunk = groups[start : start + _MAX_GROUPS_PER_REQUEST]
-        keys = sum(len(p) + len(s) for p, s in chunk)
-        logger.debug("Requesting %d groups (%d keys)", len(chunk), keys)
+        key_count = sum(len(primary) + len(secondary) for primary, secondary in chunk)
+        logger.debug("Requesting %d groups (%d keys)", len(chunk), key_count)
         reports.extend(await account.fetch_raw_reports(chunk))
     return reports
 
@@ -113,7 +114,11 @@ def _apply(
     owners: _KeyOwners,
     newest: dict[FindMyAccessory, LocationReport],
 ) -> None:
-    """Decrypt reports, attribute them to accessories, and keep the newest each."""
+    """Decrypt reports, attribute them to accessories, and keep the newest of each.
+
+    Updates `newest` in place, and advances each answering accessory's rolling-key
+    alignment so later runs don't rescan the window it already covered.
+    """
     for report in reports:
         owner = owners.get(report.hashed_adv_key_bytes)
         if owner is None:

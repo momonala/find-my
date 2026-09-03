@@ -26,6 +26,7 @@ import sqlite3
 import sys
 from datetime import UTC
 from datetime import datetime
+from typing import Any
 
 import typer
 from findmy import AppleAccount
@@ -196,7 +197,7 @@ def load_trackers(refresh_keys: bool = False) -> list[FindMyAccessory]:
     if not is_macos_14_plus():
         raise UnsupportedPlatformError(_UNSUPPORTED_PLATFORM_MSG)
 
-    trackers = [a for a in list_accessories() if _is_tracker(a)]
+    trackers = [accessory for accessory in list_accessories() if _is_tracker(accessory)]
     _save_trackers(trackers)
     return trackers
 
@@ -268,7 +269,7 @@ _anisette_uses = 0
 _ANISETTE_MAX_USES = 200
 
 
-def _get_anisette_provider(state: dict) -> LocalAnisetteProvider:
+def _get_anisette_provider(state: dict[str, Any]) -> LocalAnisetteProvider:
     """Return the process-wide Anisette provider, rebuilt every `_ANISETTE_MAX_USES` uses.
 
     Building one spins up a unicorn VM, so it is reused across poll cycles. It

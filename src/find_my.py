@@ -11,6 +11,7 @@ cookies are cached in .icloud_session/ so later runs skip verification.
 import sys
 from datetime import UTC
 from datetime import datetime
+from typing import Any
 
 import typer
 from pyicloud import PyiCloudService
@@ -99,7 +100,7 @@ def _discard_api() -> None:
     _api = None
 
 
-def _to_location(raw: dict) -> Location:
+def _to_location(raw: dict[str, Any]) -> Location:
     """Convert a pyicloud location payload, whose timestamp is epoch milliseconds."""
     return Location(
         latitude=raw["latitude"],

@@ -18,8 +18,7 @@
   const HISTORY_LIMIT = 2000;
   const DEFAULT_ZOOM = 16;
   const FALLBACK_CENTER = [0, 0];
-  const EARTH_RADIUS_M = 6371008.8;
-  // Web Mercator uses the sphere at the equator, not the mean radius above.
+  // Web Mercator uses the sphere at the equator, not a mean radius.
   const EARTH_CIRCUMFERENCE_M = 40_075_016.686;
   // Alert radius rings: roughly how long one dash-plus-gap should be, and how
   // long the dashes take to travel all the way around the ring -- a lap, not a
@@ -35,6 +34,16 @@
   // enter/exit, which carry `is_active`) -- this is how long its marker
   // highlight and "Triggered" status stay shown after the fact.
   const ALERT_RECENT_MS = 10 * 60 * 1000;
+  // Mirrors _MAX_ICON_LENGTH in src/api.py, which rejects anything longer.
+  const ICON_MAX_LENGTH = 16;
+  // How close two clicks on the same alert row must be to count as a double-click.
+  const ALERT_DOUBLE_CLICK_MS = 400;
+  const DEFAULT_ALERT_THRESHOLD_M = 100;
+
+  // Below this width the sidebar is an off-canvas drawer rather than an
+  // always-visible panel -- there isn't room for both the list and a usable map.
+  const MOBILE_QUERY = window.matchMedia("(max-width: 640px)");
+  const REDUCED_MOTION_QUERY = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const state = {
     devices: [],
@@ -79,7 +88,6 @@
   const tabSwitcherPillEl = document.querySelector(".tab-switcher-pill");
   const sortGroupEl = document.querySelector(".sort-group");
   const timeRangeEl = document.getElementById("time-range");
-  let historyToggleEl = null; // built inside the map style dialog
   const selectAllButton = document.getElementById("select-all");
   const selectNoneButton = document.getElementById("select-none");
   const trackEmptyEl = document.getElementById("track-empty");
@@ -92,6 +100,7 @@
   const sidebarBackdropEl = document.getElementById("sidebar-backdrop");
   const alertEmptyEl = document.getElementById("alert-empty");
   const alertAddOpenButton = document.getElementById("alert-add-open");
+  const mapStyleOpenButton = document.getElementById("map-style-open");
 
   // --- Error banners ---------------------------------------------------------
   //
@@ -138,14 +147,6 @@
     const days = Math.floor(totalHours / 24);
     const remainderHours = totalHours % 24;
     return `${days}d ${remainderHours}h ago`;
-  }
-
-  function haversineMeters(lat1, lon1, lat2, lon2) {
-    const toRad = (deg) => (deg * Math.PI) / 180;
-    const halfChord =
-      Math.sin((toRad(lat2) - toRad(lat1)) / 2) ** 2 +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin((toRad(lon2) - toRad(lon1)) / 2) ** 2;
-    return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(halfChord));
   }
 
   function formatDistance(meters) {
@@ -232,13 +233,76 @@
     return response.json();
   }
 
+  // --- Dialog building ------------------------------------------------------
+  //
+  // All three dialogs (icon editor, map style, alert editor) are <dialog>
+  // elements built once and reused. They share chrome and field markup, so
+  // they share these builders and the `.app-dialog` styles that go with them.
+
+  function createDialog(variantClass) {
+    const dialog = document.createElement("dialog");
+    dialog.className = `app-dialog ${variantClass}`;
+    document.body.append(dialog);
+    return dialog;
+  }
+
+  function createField(labelText, control) {
+    const label = document.createElement("label");
+    label.className = "dialog-field";
+    const caption = document.createElement("span");
+    caption.textContent = labelText;
+    label.append(caption, control);
+    return label;
+  }
+
+  function createSelect(options) {
+    const select = document.createElement("select");
+    select.className = "dialog-select";
+    for (const [value, text] of options) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      select.append(option);
+    }
+    return select;
+  }
+
+  function createButton(text, className, onClick) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.textContent = text;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function createSubmitButton(text) {
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "btn-floating";
+    button.textContent = text;
+    return button;
+  }
+
+  function createActions(...buttons) {
+    const actions = document.createElement("div");
+    actions.className = "dialog-actions";
+    actions.append(...buttons);
+    return actions;
+  }
+
+  function sectionTitle(text) {
+    const title = document.createElement("p");
+    title.className = "dialog-section-title";
+    title.textContent = text;
+    return title;
+  }
+
   // --- Motion --------------------------------------------------------------
   //
   // Read durations back out of the stylesheet rather than repeating them here,
   // so retuning a token in dashboard.css can't leave JS waiting the old
   // amount of time and cutting an animation off part-way.
-
-  const REDUCED_MOTION_QUERY = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   function motionDurationMs(token) {
     const raw = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
@@ -293,7 +357,7 @@
       addMapTilerStyles(config.maptiler_key);
     } catch (error) {
       console.error("Failed to load /config", error);
-      showFatalError("Could not load home coordinates; centering the map on (0, 0) and hiding distances.");
+      showFatalError("Could not load home coordinates; centering the map on (0, 0).");
     }
 
     // Default zoom control sits top-left, right under the sidebar.
@@ -317,68 +381,60 @@
 
   // --- Map style picker ------------------------------------------------------
 
-  let MAP_STYLES = [
+  const OSM_ATTRIBUTION =
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  const CARTO_ATTRIBUTION = `&copy; <a href="https://carto.com/attributions">CARTO</a> ${OSM_ATTRIBUTION}`;
+  const MAPTILER_ATTRIBUTION =
+    '&copy; <a href="https://www.maptiler.com/copyright/" target="_blank" rel="noopener noreferrer">MapTiler</a> ' +
+    OSM_ATTRIBUTION;
+
+  const MAP_STYLES = [
     {
       key: "voyager",
       label: "Voyager",
       url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-      attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution: CARTO_ATTRIBUTION,
     },
     {
       key: "dark",
       label: "Dark Matter",
       url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-      attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution: CARTO_ATTRIBUTION,
     },
     {
       key: "positron",
       label: "Positron",
       url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-      attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution: CARTO_ATTRIBUTION,
     },
     {
       key: "osm",
       label: "OpenStreetMap",
       url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution: OSM_ATTRIBUTION,
     },
   ];
 
   // MapTiler tiles are far more reliable than raw OSM (their own CDN, generous
   // free tier), but need an API key -- only offer them once the server says
   // one is configured (see MAPTILER_API_KEY in src/env.py).
-  const MAPTILER_ATTRIBUTION =
-    '&copy; <a href="https://www.maptiler.com/copyright/" target="_blank">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  const MAPTILER_STYLES = [
+    { key: "maptiler-streets", label: "MapTiler Streets", path: "maps/streets-v2/{z}/{x}/{y}.png" },
+    { key: "maptiler-outdoor", label: "MapTiler Outdoor", path: "maps/outdoor-v2/{z}/{x}/{y}.png" },
+    { key: "maptiler-satellite", label: "MapTiler Satellite", path: "maps/satellite/{z}/{x}/{y}.jpg" },
+    { key: "maptiler-dataviz", label: "MapTiler Dataviz", path: "maps/dataviz/{z}/{x}/{y}.png" },
+  ];
 
   function addMapTilerStyles(key) {
-    if (!key || MAP_STYLES.some((s) => s.key.startsWith("maptiler-"))) return;
-    MAP_STYLES = [
-      ...MAP_STYLES,
-      {
-        key: "maptiler-streets",
-        label: "MapTiler Streets",
-        url: `https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${key}`,
+    if (!key || MAP_STYLES.some((style) => style.key.startsWith("maptiler-"))) return;
+    for (const { key: styleKey, label, path } of MAPTILER_STYLES) {
+      MAP_STYLES.push({
+        key: styleKey,
+        label,
+        url: `https://api.maptiler.com/${path}?key=${key}`,
         attribution: MAPTILER_ATTRIBUTION,
-      },
-      {
-        key: "maptiler-outdoor",
-        label: "MapTiler Outdoor",
-        url: `https://api.maptiler.com/maps/outdoor-v2/{z}/{x}/{y}.png?key=${key}`,
-        attribution: MAPTILER_ATTRIBUTION,
-      },
-      {
-        key: "maptiler-satellite",
-        label: "MapTiler Satellite",
-        url: `https://api.maptiler.com/maps/satellite/{z}/{x}/{y}.jpg?key=${key}`,
-        attribution: MAPTILER_ATTRIBUTION,
-      },
-      {
-        key: "maptiler-dataviz",
-        label: "MapTiler Dataviz",
-        url: `https://api.maptiler.com/maps/dataviz/{z}/{x}/{y}.png?key=${key}`,
-        attribution: MAPTILER_ATTRIBUTION,
-      },
-    ];
+      });
+    }
     updateMapStyleDialog();
   }
 
@@ -390,7 +446,7 @@
   }
 
   function applyMapStyle(key) {
-    const style = MAP_STYLES.find((s) => s.key === key) || MAP_STYLES[0];
+    const style = MAP_STYLES.find((candidate) => candidate.key === key) || MAP_STYLES[0];
     if (activeTileLayer) map.removeLayer(activeTileLayer);
     activeTileLayer = L.tileLayer(style.url, {
       attribution: style.attribution,
@@ -403,76 +459,51 @@
   let mapStyleDialog = null;
   let mapStyleDialogTrigger = null;
 
-  function buildMapStyleDialog() {
-    const dialog = document.createElement("dialog");
-    dialog.className = "icon-dialog";
+  function buildHistoryToggleRow() {
+    const row = document.createElement("label");
+    row.className = "dialog-toggle-row";
 
-    // Map style section
-    const styleTitle = document.createElement("p");
-    styleTitle.className = "map-style-dialog-title";
-    styleTitle.textContent = "Map style";
-
-    const list = document.createElement("select");
-    list.className = "map-style-select";
-
-    for (const style of MAP_STYLES) {
-      const option = document.createElement("option");
-      option.value = style.key;
-      option.textContent = style.label;
-      list.append(option);
-    }
-
-    list.addEventListener("change", () => {
-      applyMapStyle(list.value);
-      updateMapStyleDialog();
-    });
-
-    // History toggle section
-    const historyTitle = document.createElement("p");
-    historyTitle.className = "map-style-dialog-title";
-    historyTitle.style.marginTop = "var(--space-4)";
-    historyTitle.textContent = "Options";
-
-    const historyRow = document.createElement("label");
-    historyRow.className = "map-style-toggle-row";
-
-    const historyLabel = document.createElement("span");
-    historyLabel.textContent = "Show history trail";
+    const caption = document.createElement("span");
+    caption.textContent = "Show history trail";
 
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "toggle-switch";
     toggle.setAttribute("role", "switch");
-    toggle.setAttribute("aria-checked", "true");
+    toggle.setAttribute("aria-checked", String(state.showHistory));
     toggle.addEventListener("click", () => {
       state.showHistory = !state.showHistory;
       toggle.setAttribute("aria-checked", String(state.showHistory));
       reloadTracks();
     });
-    historyToggleEl = toggle;
 
-    historyRow.append(historyLabel, toggle);
+    row.append(caption, toggle);
+    return row;
+  }
 
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.className = "btn-ghost";
-    cancelButton.textContent = "Close";
-    cancelButton.addEventListener("click", () => dialog.close());
+  function buildMapStyleDialog() {
+    const dialog = createDialog("map-style-dialog");
 
-    const actions = document.createElement("div");
-    actions.className = "icon-dialog-actions";
-    actions.append(cancelButton);
+    const styleSelect = createSelect(MAP_STYLES.map((style) => [style.key, style.label]));
+    styleSelect.addEventListener("change", () => {
+      applyMapStyle(styleSelect.value);
+      updateMapStyleDialog();
+    });
 
-    dialog.append(styleTitle, list, historyTitle, historyRow, actions);
-    document.body.append(dialog);
+    dialog.append(
+      sectionTitle("Map style"),
+      styleSelect,
+      sectionTitle("Options"),
+      buildHistoryToggleRow(),
+      createActions(createButton("Close", "btn-ghost", () => dialog.close())),
+    );
 
     dialog.addEventListener("close", () => mapStyleDialogTrigger?.focus());
     return dialog;
   }
 
   function updateMapStyleDialog() {
-    if (!mapStyleDialog) return;
-    const select = mapStyleDialog.querySelector(".map-style-select");
+    const select = mapStyleDialog?.querySelector(".dialog-select");
     if (select) select.value = loadMapStyleKey();
   }
 
@@ -676,7 +707,7 @@
     const { key, direction } = state.sort;
     const sign = direction === "asc" ? 1 : -1;
 
-    return visibleDevices().sort((a, b) => {
+    return [...visibleDevices()].sort((a, b) => {
       if (key === "seen_at") {
         const aTime = a.seen_at ? new Date(a.seen_at).getTime() : -Infinity;
         const bTime = b.seen_at ? new Date(b.seen_at).getTime() : -Infinity;
@@ -751,9 +782,10 @@
     renderDeviceList();
   }
 
+  // Computed server-side (see _serialize_location in src/api.py) so the CLI's
+  // --json output and this view share one distance calculation.
   function distanceMeters(device) {
-    if (!state.home || !isFiniteCoordinate(device.latitude) || !isFiniteCoordinate(device.longitude)) return null;
-    return haversineMeters(state.home.latitude, state.home.longitude, device.latitude, device.longitude);
+    return isFiniteCoordinate(device.distance_m) ? device.distance_m : null;
   }
 
   function distanceLabel(device) {
@@ -873,52 +905,38 @@
 
   let iconDialog = null;
   let iconDialogInput = null;
+  let iconDialogCaption = null;
   let iconDialogDeviceId = null;
   let iconDialogTrigger = null;
 
   function buildIconDialog() {
-    const dialog = document.createElement("dialog");
-    dialog.className = "icon-dialog";
+    const dialog = createDialog("icon-dialog");
 
     const form = document.createElement("form");
+    form.className = "dialog-form";
     form.method = "dialog";
 
-    const label = document.createElement("label");
-    label.className = "icon-dialog-label";
-    const labelText = document.createElement("span");
-    labelText.id = "icon-dialog-label-text";
     const input = document.createElement("input");
     input.type = "text";
-    input.maxLength = 16;
+    input.maxLength = ICON_MAX_LENGTH;
     input.autocomplete = "off";
-    input.className = "icon-dialog-input";
-    input.setAttribute("aria-labelledby", "icon-dialog-label-text");
-    label.append(labelText, input);
+    input.className = "dialog-input icon-dialog-input";
 
-    const actions = document.createElement("div");
-    actions.className = "icon-dialog-actions";
-    const clearButton = document.createElement("button");
-    clearButton.type = "button";
-    clearButton.className = "btn-ghost";
-    clearButton.textContent = "Clear";
-    clearButton.addEventListener("click", () => {
-      input.value = "";
-      form.requestSubmit();
-    });
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.className = "btn-ghost";
-    cancelButton.textContent = "Cancel";
-    cancelButton.addEventListener("click", () => dialog.close());
-    const saveButton = document.createElement("button");
-    saveButton.type = "submit";
-    saveButton.className = "btn-floating";
-    saveButton.textContent = "Save";
-    actions.append(clearButton, cancelButton, saveButton);
+    const field = createField("", input);
+    iconDialogCaption = field.querySelector("span");
 
-    form.append(label, actions);
+    form.append(
+      field,
+      createActions(
+        createButton("Clear", "btn-ghost", () => {
+          input.value = "";
+          form.requestSubmit();
+        }),
+        createButton("Cancel", "btn-ghost", () => dialog.close()),
+        createSubmitButton("Save"),
+      ),
+    );
     dialog.append(form);
-    document.body.append(dialog);
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -927,9 +945,7 @@
       submitIcon(iconDialogDeviceId, emoji);
     });
 
-    dialog.addEventListener("close", () => {
-      iconDialogTrigger?.focus();
-    });
+    dialog.addEventListener("close", () => iconDialogTrigger?.focus());
 
     iconDialogInput = input;
     return dialog;
@@ -942,7 +958,7 @@
     iconDialog ??= buildIconDialog();
     iconDialogDeviceId = deviceId;
     iconDialogTrigger = triggerElement;
-    iconDialog.querySelector("#icon-dialog-label-text").textContent = `Marker emoji for ${device.name}`;
+    iconDialogCaption.textContent = `Marker emoji for ${device.name}`;
     iconDialogInput.value = device.icon || "";
     iconDialog.showModal();
     iconDialogInput.focus();
@@ -983,13 +999,14 @@
     return alert.alert_type === "enter" ? alert.is_active : !alert.is_active;
   }
 
+  function isAlertFlagged(alert) {
+    if (RADIUS_ALERT_TYPES.has(alert.alert_type)) return isRadiusAlertAlarmed(alert);
+    if (!alert.triggered_at) return false;
+    return Date.now() - new Date(alert.triggered_at).getTime() < ALERT_RECENT_MS;
+  }
+
   function deviceHasActiveAlert(deviceId) {
-    return state.alerts.some((alert) => {
-      if (alert.device_id !== deviceId) return false;
-      if (RADIUS_ALERT_TYPES.has(alert.alert_type)) return isRadiusAlertAlarmed(alert);
-      if (!alert.triggered_at) return false;
-      return Date.now() - new Date(alert.triggered_at).getTime() < ALERT_RECENT_MS;
-    });
+    return state.alerts.some((alert) => alert.device_id === deviceId && isAlertFlagged(alert));
   }
 
   // Kept separate from the "last triggered" time (below): the subtitle is a
@@ -1005,10 +1022,6 @@
 
   function alertTriggeredText(alert) {
     return alert.triggered_at ? `Last triggered ${formatRelativeTime(alert.triggered_at)}` : null;
-  }
-
-  function isAlertCurrentlyFlagged(alert) {
-    return RADIUS_ALERT_TYPES.has(alert.alert_type) ? isRadiusAlertAlarmed(alert) : deviceHasActiveAlert(alert.device_id);
   }
 
   // Built on the same device-row/device-text/device-name/device-subtitle
@@ -1027,7 +1040,7 @@
 
     const avatar = document.createElement("span");
     avatar.className = "avatar";
-    avatar.classList.toggle("has-active-alert", isAlertCurrentlyFlagged(alert));
+    avatar.classList.toggle("has-active-alert", isAlertFlagged(alert));
     avatar.textContent = alert.device_icon || "•";
     avatar.setAttribute("aria-hidden", "true");
 
@@ -1038,7 +1051,7 @@
     name.textContent = alert.device_name;
     const subtitle = document.createElement("span");
     subtitle.className = "device-subtitle";
-    subtitle.classList.toggle("is-alert-active", isAlertCurrentlyFlagged(alert));
+    subtitle.classList.toggle("is-alert-active", isAlertFlagged(alert));
     subtitle.textContent = `${ALERT_TYPE_LABELS[alert.alert_type]} ${Math.round(alert.threshold_m)} m · ${alertStateText(alert)}`;
     text.append(name, subtitle);
 
@@ -1062,187 +1075,140 @@
     return li;
   }
 
-  // Built once and reused, same pattern as the icon-editor dialog: a <dialog>
-  // holding the device/type/threshold fields.
-  let alertDialog = null;
-  let alertDialogDeviceSelect = null;
-  let alertDialogTypeSelect = null;
-  let alertDialogThresholdInput = null;
-  let alertDialogThresholdUnit = null;
-  let alertDialogAnchorLabel = null;
-  let alertDialogAnchorSelect = null;
-  let alertDialogSubmitButton = null;
-  let alertDialogTrigger = null;
-  // Set to the alert's id while editing an existing alert, null while adding
-  // a new one -- the one dialog/form is reused for both (mirrors the create
-  // vs update branch in the submit handler below).
-  let alertDialogEditingId = null;
+  // Built once and reused, same pattern as the icon-editor dialog. One form
+  // serves both adding and editing: `editingId` is the alert being edited, or
+  // null while adding (mirrors the create/update branch in the submit handler).
+  const alertDialog = {
+    element: null,
+    deviceSelect: null,
+    typeSelect: null,
+    anchorField: null,
+    anchorSelect: null,
+    thresholdInput: null,
+    thresholdUnit: null,
+    submitButton: null,
+    trigger: null,
+    editingId: null,
+  };
 
   // Only enter/exit alerts have an anchor point -- movement alerts measure
   // between consecutive fixes, not from a fixed point, so the field is
   // hidden rather than shown-but-irrelevant for that type.
   function updateAlertDialogFieldsForType() {
-    const isRadiusAlert = RADIUS_ALERT_TYPES.has(alertDialogTypeSelect.value);
-    alertDialogThresholdUnit.textContent = isRadiusAlert ? "m from anchor" : "m between fixes";
-    alertDialogAnchorLabel.hidden = !isRadiusAlert;
+    const isRadiusAlert = RADIUS_ALERT_TYPES.has(alertDialog.typeSelect.value);
+    alertDialog.thresholdUnit.textContent = isRadiusAlert ? "m from anchor" : "m between fixes";
+    alertDialog.anchorField.hidden = !isRadiusAlert;
+  }
+
+  function buildThresholdField() {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.step = "1";
+    input.value = String(DEFAULT_ALERT_THRESHOLD_M);
+    input.className = "dialog-input alert-threshold-input";
+
+    const unit = document.createElement("span");
+    unit.className = "alert-threshold-unit";
+
+    const wrap = document.createElement("span");
+    wrap.className = "alert-threshold-wrap";
+    wrap.append(input, unit);
+
+    alertDialog.thresholdInput = input;
+    alertDialog.thresholdUnit = unit;
+    return createField("Threshold", wrap);
   }
 
   function buildAlertDialog() {
-    const dialog = document.createElement("dialog");
-    dialog.className = "alert-dialog";
+    const dialog = createDialog("alert-dialog");
 
     const form = document.createElement("form");
+    form.className = "dialog-form";
     form.method = "dialog";
 
-    const deviceLabel = document.createElement("label");
-    deviceLabel.className = "alert-dialog-label";
-    const deviceLabelText = document.createElement("span");
-    deviceLabelText.textContent = "Device";
-    const deviceSelect = document.createElement("select");
-    deviceSelect.className = "alert-dialog-select";
-    deviceLabel.append(deviceLabelText, deviceSelect);
-
-    const typeLabel = document.createElement("label");
-    typeLabel.className = "alert-dialog-label";
-    const typeLabelText = document.createElement("span");
-    typeLabelText.textContent = "Alert type";
-    const typeSelect = document.createElement("select");
-    typeSelect.className = "alert-dialog-select";
-    for (const [value, text] of Object.entries(ALERT_TYPE_LABELS)) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = text;
-      typeSelect.append(option);
-    }
-    typeLabel.append(typeLabelText, typeSelect);
-
-    const anchorLabel = document.createElement("label");
-    anchorLabel.className = "alert-dialog-label";
-    const anchorLabelText = document.createElement("span");
-    anchorLabelText.textContent = "Measured from";
-    const anchorSelect = document.createElement("select");
-    anchorSelect.className = "alert-dialog-select";
-    for (const [value, text] of [
+    alertDialog.deviceSelect = createSelect([]);
+    alertDialog.typeSelect = createSelect(Object.entries(ALERT_TYPE_LABELS));
+    alertDialog.anchorSelect = createSelect([
       ["home", "Home"],
       ["current", "Current location"],
-    ]) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = text;
-      anchorSelect.append(option);
-    }
-    anchorLabel.append(anchorLabelText, anchorSelect);
+    ]);
+    alertDialog.anchorField = createField("Measured from", alertDialog.anchorSelect);
+    alertDialog.submitButton = createSubmitButton("Add");
 
-    const thresholdLabel = document.createElement("label");
-    thresholdLabel.className = "alert-dialog-label";
-    const thresholdLabelText = document.createElement("span");
-    thresholdLabelText.textContent = "Threshold";
-    const thresholdWrap = document.createElement("span");
-    thresholdWrap.className = "alert-threshold-wrap";
-    const thresholdInput = document.createElement("input");
-    thresholdInput.type = "number";
-    thresholdInput.min = "1";
-    thresholdInput.step = "1";
-    thresholdInput.value = "100";
-    thresholdInput.className = "alert-threshold-input";
-    const thresholdUnit = document.createElement("span");
-    thresholdUnit.className = "alert-threshold-unit";
-    thresholdWrap.append(thresholdInput, thresholdUnit);
-    thresholdLabel.append(thresholdLabelText, thresholdWrap);
-
-    const actions = document.createElement("div");
-    actions.className = "alert-dialog-actions";
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.className = "btn-ghost";
-    cancelButton.textContent = "Cancel";
-    cancelButton.addEventListener("click", () => dialog.close());
-    const submitButton = document.createElement("button");
-    submitButton.type = "submit";
-    submitButton.className = "btn-floating";
-    submitButton.textContent = "Add";
-    actions.append(cancelButton, submitButton);
-
-    form.append(deviceLabel, typeLabel, anchorLabel, thresholdLabel, actions);
+    form.append(
+      createField("Device", alertDialog.deviceSelect),
+      createField("Alert type", alertDialog.typeSelect),
+      alertDialog.anchorField,
+      buildThresholdField(),
+      createActions(
+        createButton("Cancel", "btn-ghost", () => dialog.close()),
+        alertDialog.submitButton,
+      ),
+    );
     dialog.append(form);
-    document.body.append(dialog);
 
-    typeSelect.addEventListener("change", updateAlertDialogFieldsForType);
+    alertDialog.typeSelect.addEventListener("change", updateAlertDialogFieldsForType);
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      const deviceId = deviceSelect.value;
-      if (!deviceId) return;
-      const thresholdM = Number(thresholdInput.value);
-      if (!Number.isFinite(thresholdM) || thresholdM <= 0) return;
+      const deviceId = alertDialog.deviceSelect.value;
+      const thresholdM = Number(alertDialog.thresholdInput.value);
+      if (!deviceId || !Number.isFinite(thresholdM) || thresholdM <= 0) return;
+
+      const alertType = alertDialog.typeSelect.value;
+      const anchor = RADIUS_ALERT_TYPES.has(alertType) ? alertDialog.anchorSelect.value : "home";
       dialog.close();
-      const anchor = RADIUS_ALERT_TYPES.has(typeSelect.value) ? anchorSelect.value : "home";
-      if (alertDialogEditingId != null) {
-        updateAlertRequest(alertDialogEditingId, typeSelect.value, thresholdM, anchor);
+      if (alertDialog.editingId != null) {
+        updateAlertRequest(alertDialog.editingId, alertType, thresholdM, anchor);
       } else {
-        createAlertRequest(deviceId, typeSelect.value, thresholdM, anchor);
+        createAlertRequest(deviceId, alertType, thresholdM, anchor);
       }
     });
 
-    dialog.addEventListener("close", () => {
-      alertDialogTrigger?.focus();
-    });
-
-    alertDialogDeviceSelect = deviceSelect;
-    alertDialogTypeSelect = typeSelect;
-    alertDialogThresholdInput = thresholdInput;
-    alertDialogThresholdUnit = thresholdUnit;
-    alertDialogAnchorLabel = anchorLabel;
-    alertDialogAnchorSelect = anchorSelect;
-    alertDialogSubmitButton = submitButton;
+    dialog.addEventListener("close", () => alertDialog.trigger?.focus());
     return dialog;
   }
 
   // `existingAlert` is omitted when adding a new alert, and passed when
-  // double-clicking an alert row to edit it -- the device is fixed for an
-  // edit (the API only lets you change type/threshold/anchor), so its
-  // dropdown is preselected and disabled rather than left editable.
+  // editing one -- the device is fixed for an edit (the API only lets you
+  // change type/threshold/anchor), so its dropdown is preselected and
+  // disabled rather than left editable.
   function openAlertDialog(triggerElement, preselectDeviceId, existingAlert) {
     if (state.devices.length === 0) return;
 
-    alertDialog ??= buildAlertDialog();
-    alertDialogTrigger = triggerElement;
-    alertDialogEditingId = existingAlert ? existingAlert.id : null;
+    alertDialog.element ??= buildAlertDialog();
+    alertDialog.trigger = triggerElement;
+    alertDialog.editingId = existingAlert ? existingAlert.id : null;
 
-    alertDialogDeviceSelect.textContent = "";
+    alertDialog.deviceSelect.textContent = "";
     for (const device of state.devices) {
       const option = document.createElement("option");
       option.value = device.id;
       option.textContent = `${device.icon || "❓"} ${device.name}`;
-      alertDialogDeviceSelect.append(option);
+      alertDialog.deviceSelect.append(option);
     }
 
     if (existingAlert) {
-      alertDialogDeviceSelect.value = String(existingAlert.device_id);
-      alertDialogDeviceSelect.disabled = true;
-      alertDialogTypeSelect.value = existingAlert.alert_type;
-      alertDialogThresholdInput.value = String(Math.round(existingAlert.threshold_m));
-      alertDialogAnchorSelect.value = existingAlert.anchor_lat != null ? "current" : "home";
-      alertDialogSubmitButton.textContent = "Save";
+      alertDialog.deviceSelect.value = String(existingAlert.device_id);
+      alertDialog.deviceSelect.disabled = true;
+      alertDialog.typeSelect.value = existingAlert.alert_type;
+      alertDialog.thresholdInput.value = String(Math.round(existingAlert.threshold_m));
+      alertDialog.anchorSelect.value = existingAlert.anchor_lat != null ? "current" : "home";
+      alertDialog.submitButton.textContent = "Save";
     } else {
-      alertDialogDeviceSelect.disabled = false;
-      if (preselectDeviceId != null) alertDialogDeviceSelect.value = String(preselectDeviceId);
-      alertDialogTypeSelect.value = "movement";
-      alertDialogThresholdInput.value = "100";
-      alertDialogAnchorSelect.value = "home";
-      alertDialogSubmitButton.textContent = "Add";
+      alertDialog.deviceSelect.disabled = false;
+      if (preselectDeviceId != null) alertDialog.deviceSelect.value = String(preselectDeviceId);
+      alertDialog.typeSelect.value = "movement";
+      alertDialog.thresholdInput.value = String(DEFAULT_ALERT_THRESHOLD_M);
+      alertDialog.anchorSelect.value = "home";
+      alertDialog.submitButton.textContent = "Add";
     }
     updateAlertDialogFieldsForType();
 
-    alertDialog.showModal();
-    alertDialogDeviceSelect.focus();
+    alertDialog.element.showModal();
+    alertDialog.deviceSelect.focus();
   }
-
-  alertAddOpenButton.addEventListener("click", () => openAlertDialog(alertAddOpenButton));
-
-  document.getElementById("map-style-open").addEventListener("click", (event) => {
-    openMapStyleDialog(event.currentTarget);
-  });
 
   async function createAlertRequest(deviceId, alertType, thresholdM, anchor = "home") {
     try {
@@ -1413,7 +1379,9 @@
       }
       const alertId = alertRow.dataset.alertId;
       const now = Date.now();
-      if (lastAlertRowClick && lastAlertRowClick.alertId === alertId && now - lastAlertRowClick.time < 400) {
+      const isDoubleClick =
+        lastAlertRowClick?.alertId === alertId && now - lastAlertRowClick.time < ALERT_DOUBLE_CLICK_MS;
+      if (isDoubleClick) {
         lastAlertRowClick = null;
         const alert = state.alerts.find((candidate) => String(candidate.id) === alertId);
         if (alert) openAlertDialog(alertRow, alert.device_id, alert);
@@ -1471,6 +1439,9 @@
 
   timeRangeEl.addEventListener("change", () => reloadTracks());
 
+  alertAddOpenButton.addEventListener("click", () => openAlertDialog(alertAddOpenButton));
+
+  mapStyleOpenButton.addEventListener("click", () => openMapStyleDialog(mapStyleOpenButton));
 
   // --- Mobile sidebar drawer ----------------------------------------------
   //
@@ -1478,8 +1449,6 @@
   // view, see dashboard.css) opened via the hamburger button, rather than the
   // always-visible panel desktop gets -- there isn't room for both the list
   // and a usable map at once.
-  const MOBILE_QUERY = window.matchMedia("(max-width: 640px)");
-
   function setSidebarOpen(open) {
     sidebarEl.classList.toggle("is-open", open);
     sidebarBackdropEl.classList.toggle("is-open", open);
@@ -1496,19 +1465,25 @@
 
   sidebarBackdropEl.addEventListener("click", () => setSidebarOpen(false));
 
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && sidebarEl.classList.contains("is-open")) {
+      setSidebarOpen(false);
+      sidebarToggleEl.focus();
+    }
+  });
+
   // A resize past the breakpoint (e.g. rotating to landscape) shouldn't leave
   // a desktop-width sidebar stuck in the "open" drawer state.
   MOBILE_QUERY.addEventListener("change", () => setSidebarOpen(false));
 
-  function refreshAll() {
-    // loadAlerts() runs alongside loadDevices()/loadStatus() rather than
-    // after -- renderDeviceList() runs again once all three land so the
-    // sidebar's alert highlight isn't one refresh cycle stale, since
-    // loadDevices() alone renders before loadAlerts() may have resolved.
-    return Promise.all([loadDevices(), loadStatus(), loadAlerts()]).then(() => {
-      renderDeviceList();
-      return loadTracks();
-    });
+  // loadAlerts() runs alongside loadDevices()/loadStatus() rather than after --
+  // renderDeviceList() runs again once all three land so the sidebar's alert
+  // highlight isn't one refresh cycle stale, since loadDevices() alone renders
+  // before loadAlerts() may have resolved.
+  async function refreshAll() {
+    await Promise.all([loadDevices(), loadStatus(), loadAlerts()]);
+    renderDeviceList();
+    await loadTracks();
   }
 
   // --- Data loading ---------------------------------------------------------
@@ -1609,11 +1584,7 @@
     .then(() => {
       setActiveTab(state.activeTab, { animatePill: false });
       updateSortIndicators();
-      return Promise.all([loadDevices(), loadStatus(), loadAlerts()]);
-    })
-    .then(() => {
-      renderDeviceList();
-      return loadTracks();
+      return refreshAll();
     })
     .catch(handleFatalError);
 

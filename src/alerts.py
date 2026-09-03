@@ -1,42 +1,26 @@
 """Evaluate configured alerts against freshly-written location fixes.
 
 Called from src/poller.py right after src.db.record_fetch, inside the same
-transaction, so evaluation never runs against a partially-written cycle.
-Only devices that actually got a new `location_history` row this cycle are
+transaction. Only devices that got a new `location_history` row this cycle are
 checked -- for every alert type, nothing about the movement delta or the
-distance to home changes without a new fix.
+distance to the anchor changes without a new fix.
 
-Three alert types:
-- `movement`: fires when consecutive fixes are more than `threshold_m` apart.
-- `enter`: fires when the device crosses into `threshold_m` of its anchor point.
-- `exit`: fires when the device crosses out of `threshold_m` of its anchor point.
+Three alert types: `movement` fires when consecutive fixes are more than
+`threshold_m` apart; `enter` and `exit` fire when the device crosses into or
+out of `threshold_m` of its anchor point -- `(anchor_lat, anchor_lon)` if set,
+else the configured home coordinates.
 
-An alert's anchor point is `(anchor_lat, anchor_lon)` if set, else the
-configured home coordinates -- see src/api.py's `anchor: "home" | "current"`
-on alert creation.
+`enter`/`exit` are edge-triggered off `alerts.is_active`, which always means
+"the device is currently inside this alert's radius" regardless of type. Both
+types track it so each can detect its own transition; the opposite transition
+updates `is_active` silently so the next real crossing is still detected.
 
-`enter`/`exit` are edge-triggered off `is_active`, which always means "is the
-device currently inside this alert's radius" -- both alert types track it so
-they can each detect their own transition, but only the transition the type
-is named for sends a notification; the opposite transition just updates
-`is_active` silently so the next real crossing is detected correctly.
-
-All three types are further gated by ALERT_COOLDOWN_S: a notification is
-suppressed if the alert last fired less than that long ago, so a device
-hovering near a boundary (rapid enter/exit) or drifting back and forth past a
-movement threshold doesn't spam. A suppressed `enter`/`exit` transition is
-simply retried on the next cycle -- `is_active` is only updated when the
-alert actually fires -- so the notification just lands late rather than
-being lost.
-
-A firing writes a row to `alert_events` (see migrations/versions/0003_alert_events.py)
--- `alerts.is_active` is current state, not history, and holds no timestamp of
-its own; `_cooldown_elapsed` and the dashboard's `triggered_at` both read the
-latest `alert_events` row for an alert instead.
+All three types are gated by ALERT_COOLDOWN_S. A suppressed `enter`/`exit`
+transition leaves `is_active` untouched and so is retried on the next cycle,
+landing late rather than being lost.
 
 Delivery is in-app (the dashboard reads `is_active`/`triggered_at` off
-GET /alerts) plus an optional Telegram push from src/telegram.py, fired from
-the same transitions.
+GET /alerts) plus an optional Telegram push from src/telegram.py.
 """
 
 import logging
@@ -60,8 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Minimum time between two notifications for the *same* alert, regardless of
 # type -- keeps a device flapping across a radius boundary, or drifting back
-# and forth past a movement threshold, from spamming a notification every
-# poll cycle.
+# and forth past a movement threshold, from notifying every poll cycle.
 ALERT_COOLDOWN_S = 300
 
 
@@ -98,7 +81,7 @@ def _check_movement(
     if moved_m > alert["threshold_m"] and _cooldown_elapsed(alert, now):
         db.log_alert_event(conn, alert["id"], now)
         metrics.increment("movement_triggered")
-        _notify(send_movement_alert, alert, moved_m)
+        _notify(alert["id"], lambda: send_movement_alert(alert, moved_m))
 
 
 def _check_radius_crossing(
@@ -111,21 +94,22 @@ def _check_radius_crossing(
     inside = distance_m <= alert["threshold_m"]
     was_inside = bool(alert["is_active"])
 
-    notify_transition = inside and not was_inside if is_enter else not inside and was_inside
-    if notify_transition:
-        if _cooldown_elapsed(alert, now):
-            db.set_alert_active(conn, alert["id"], is_active=inside)
-            db.log_alert_event(conn, alert["id"], now)
-            metrics.increment(f"{alert['alert_type']}_triggered")
-            _notify(send_enter_alert if is_enter else send_exit_alert, alert)
-        # else: leave is_active as-is, so this transition is retried (and the
-        # notification sent) as soon as the cooldown allows, instead of lost.
-    elif inside != was_inside:
-        # The opposite transition, for this alert's type -- just keep
-        # is_active accurate so the next real crossing is detected correctly.
-        # Silent and not cooldown-gated: it's bookkeeping, not a notification
-        # (no alert_events row).
+    if inside == was_inside:
+        return
+
+    notifies = inside if is_enter else not inside
+    if not notifies:
+        # The opposite transition for this alert's type: bookkeeping only, so
+        # it's silent, not cooldown-gated, and writes no alert_events row.
         db.set_alert_active(conn, alert["id"], is_active=inside)
+        return
+
+    if _cooldown_elapsed(alert, now):
+        db.set_alert_active(conn, alert["id"], is_active=inside)
+        db.log_alert_event(conn, alert["id"], now)
+        metrics.increment(f"{alert['alert_type']}_triggered")
+        send = send_enter_alert if is_enter else send_exit_alert
+        _notify(alert["id"], lambda: send(alert))
 
 
 def _cooldown_elapsed(alert: sqlite3.Row, now: str) -> bool:
@@ -135,11 +119,11 @@ def _cooldown_elapsed(alert: sqlite3.Row, now: str) -> bool:
     return elapsed.total_seconds() >= ALERT_COOLDOWN_S
 
 
-def _notify(send: Callable[..., None], alert: sqlite3.Row, *args: object, **kwargs: object) -> None:
-    """Best-effort Telegram push -- a down/misconfigured bot must not stop the
+def _notify(alert_id: int, send: Callable[[], None]) -> None:
+    """Best-effort Telegram push -- a down or misconfigured bot must not stop the
     rest of this cycle's alerts from being evaluated and recorded in-app."""
     try:
-        send(alert, *args, **kwargs)
+        send()
     except requests.RequestException:
         metrics.increment("telegram_failed")
-        logger.warning("Telegram notification failed for alert %s", alert["id"], exc_info=True)
+        logger.warning("Telegram notification failed for alert %s", alert_id, exc_info=True)

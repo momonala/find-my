@@ -12,8 +12,10 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "flask>=3.0.0",
     "pyicloud>=2.6.5",
-    "schedule>=1.2.0",
     "requests>=2.32.0",
+    # Imported directly by src/tracking.py for the CLI's table output. It also
+    # arrives via typer, but a transitive dependency is not a contract.
+    "rich>=13.0.0",
     # Pinned exactly: src/batch_reports.py drives semi-internal APIs
     # (fetch_raw_reports, LocationReport.decrypt, update_alignment) that this
     # reverse-engineered library can change in a patch release.
@@ -128,9 +130,6 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
-
-# No `exclude-newer`: a relative window ("1 week") makes resolution depend on the
-# day it runs, which defeats the point of committing uv.lock.
 
 [tool.uv.sources]
 spyglass = { git = "https://github.com/momonala/spyglass.git", rev = "main" }

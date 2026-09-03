@@ -29,6 +29,7 @@ from flask import request
 from flask import url_for
 from flask.typing import ResponseReturnValue
 
+import src.telemetry  # noqa: F401  -- imported for its side effect: wires stdout + Spyglass logging
 from src.config import HOME_LATITUDE
 from src.config import HOME_LONGITUDE
 from src.db import all_latest_locations
@@ -48,10 +49,10 @@ from src.env import MAPTILER_API_KEY
 from src.env import TELEGRAM_API_TOKEN
 from src.env import TELEGRAM_CHAT_ID
 from src.poller import start_background_poller
-from src.telemetry import logger as _telemetry_logger  # noqa: F401  (wires stdout + Spyglass logging)
 from src.tracking import distance_from_home_m_at
 
 _VALID_ALERT_TYPES = {"movement", "enter", "exit"}
+_VALID_ANCHORS = {"home", "current"}
 
 # Sensible fallback emoji for common Apple device kinds (src/find_my.py's
 # `device.device_type` values), used until a user sets their own via
@@ -65,8 +66,11 @@ _DEFAULT_ICONS = {
 }
 
 # Long enough for a flag sequence or an emoji with a skin-tone modifier, short
-# enough that the column can't be repurposed as arbitrary storage.
+# enough that the column can't be repurposed as arbitrary storage. Mirrored by
+# ICON_MAX_LENGTH in src/static/dashboard.js.
 _MAX_ICON_LENGTH = 16
+
+_EMOJI_BODY_SHAPE = "an 'emoji' key (null to clear)"
 
 
 def _serialize_location(row: sqlite3.Row) -> dict[str, Any]:
@@ -95,15 +99,23 @@ def _serialize_fix(row: sqlite3.Row) -> dict[str, Any]:
     return {"latitude": row["latitude"], "longitude": row["longitude"], "seen_at": row["seen_at"]}
 
 
+def _json_object_body(expected: str) -> dict[str, Any]:
+    """The request body as a JSON object, aborting 400 with `expected` if it isn't one."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        abort(400, description=f"Body must be a JSON object with {expected}.")
+    return payload
+
+
 def _parse_icon_payload() -> str | None:
     """Return the requested emoji, or None to clear it, aborting 400 on junk.
 
     Without a cap this column is arbitrary user-controlled storage that every
     dashboard visitor then renders, so the shape is checked rather than trusted.
     """
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict) or "emoji" not in payload:
-        abort(400, description="Body must be a JSON object with an 'emoji' key (null to clear).")
+    payload = _json_object_body(_EMOJI_BODY_SHAPE)
+    if "emoji" not in payload:
+        abort(400, description=f"Body must be a JSON object with {_EMOJI_BODY_SHAPE}.")
 
     emoji = payload["emoji"]
     if emoji is None:
@@ -137,9 +149,6 @@ def _serialize_alert(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-_VALID_ANCHORS = {"home", "current"}
-
-
 def _parse_alert_fields(payload: dict[str, Any]) -> tuple[str, float, str]:
     """Shared alert_type/threshold_m/anchor validation for create and update payloads, aborting 400 on junk.
 
@@ -153,7 +162,7 @@ def _parse_alert_fields(payload: dict[str, Any]) -> tuple[str, float, str]:
         abort(400, description=f"'alert_type' must be one of: {', '.join(sorted(_VALID_ALERT_TYPES))}.")
 
     threshold_m = payload.get("threshold_m")
-    if isinstance(threshold_m, bool) or not isinstance(threshold_m, (int, float)):
+    if isinstance(threshold_m, bool) or not isinstance(threshold_m, int | float):
         abort(400, description="'threshold_m' must be a number.")
     if not math.isfinite(threshold_m) or threshold_m <= 0:
         abort(400, description="'threshold_m' must be a finite number greater than 0.")
@@ -167,11 +176,7 @@ def _parse_alert_fields(payload: dict[str, Any]) -> tuple[str, float, str]:
 
 def _parse_alert_payload() -> tuple[str, str, float, str]:
     """Return (device_id, alert_type, threshold_m, anchor) from the request body, aborting 400 on junk."""
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(
-            400, description="Body must be a JSON object with 'device_id', 'alert_type', and 'threshold_m'."
-        )
+    payload = _json_object_body("'device_id', 'alert_type', and 'threshold_m'")
 
     device_id = payload.get("device_id")
     if not isinstance(device_id, str) or not device_id:
@@ -187,10 +192,7 @@ def _parse_alert_update_payload() -> tuple[str, float, str]:
     No `device_id` here -- an alert's device is fixed at creation, so editing
     only ever touches type/threshold/anchor.
     """
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(400, description="Body must be a JSON object with 'alert_type' and 'threshold_m'.")
-    return _parse_alert_fields(payload)
+    return _parse_alert_fields(_json_object_body("'alert_type' and 'threshold_m'"))
 
 
 def _require_write_token() -> None:
@@ -206,7 +208,7 @@ def _require_write_token() -> None:
         abort(401, description="Missing or invalid X-Api-Token header.")
 
 
-def create_app(start_poller: bool = True) -> Flask:
+def create_app(*, start_poller: bool = True) -> Flask:
     """Build the Flask app, wiring up the DB schema and (optionally) the poller.
 
     `start_poller=False` is for tests -- it lets them seed a temp DB directly and
@@ -302,11 +304,11 @@ def create_app(start_poller: bool = True) -> Flask:
         with connection() as conn:
             if anchor == "current":
                 location = latest_location_for(conn, device_id)
-                if location is not None and location["latitude"] is not None:
-                    anchor_lat, anchor_lon = location["latitude"], location["longitude"]
-                elif location is not None:
+                if location is None:
+                    abort(404, description=f"Unknown device_id: {device_id!r}.")
+                if location["latitude"] is None:
                     abort(400, description="Cannot anchor to current location: device has no fix yet.")
-                # else: unknown device_id -- create_alert below 404s.
+                anchor_lat, anchor_lon = location["latitude"], location["longitude"]
 
             alert_id = create_alert(
                 conn, device_id, alert_type, threshold_m, anchor_lat=anchor_lat, anchor_lon=anchor_lon
