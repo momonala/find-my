@@ -284,7 +284,7 @@ def _get_anisette_provider(state: dict[str, Any]) -> LocalAnisetteProvider:
     saw-tooths" in README.md.
     """
     global _anisette_provider, _anisette_uses
-    if _anisette_uses >= _ANISETTE_MAX_USES:
+    if _anisette_provider is not None and _anisette_uses >= _ANISETTE_MAX_USES:
         _anisette_provider._ani = None  # noqa: SLF001 -- see above; no public equivalent
         _anisette_provider = None
         _anisette_uses = 0
