@@ -77,12 +77,14 @@ def test_config_exposes_home_coordinates_and_telegram_status(client, monkeypatch
     monkeypatch.setattr(api, "TELEGRAM_API_TOKEN", "")
     monkeypatch.setattr(api, "TELEGRAM_CHAT_ID", "")
     monkeypatch.setattr(api, "MAPTILER_API_KEY", "")
+    monkeypatch.setattr(api, "offered_map_types", lambda: [])
     body = client.get("/config").get_json()
     assert body == {
         "home_latitude": HOME_LATITUDE,
         "home_longitude": HOME_LONGITUDE,
         "telegram_configured": False,
         "maptiler_key": "",
+        "google_map_types": [],
     }
 
 
@@ -91,6 +93,42 @@ def test_config_reports_telegram_configured_when_both_set(client, monkeypatch):
     monkeypatch.setattr(api, "TELEGRAM_CHAT_ID", "chat")
     body = client.get("/config").get_json()
     assert body["telegram_configured"] is True
+
+
+def test_google_tile_route_proxies_bytes(client, monkeypatch):
+    monkeypatch.setattr(api, "fetch_tile", lambda *_: (b"PNG", "image/png"))
+    response = client.get("/tiles/google/roadmap/5/1/2")
+    assert response.status_code == 200
+    assert response.data == b"PNG"
+    assert response.headers["Cache-Control"] == "public, max-age=2592000, immutable"
+
+
+def test_google_tile_route_passes_through_the_upstream_content_type(client, monkeypatch):
+    monkeypatch.setattr(api, "fetch_tile", lambda *_: (b"JPG", "image/jpeg"))
+    assert client.get("/tiles/google/hybrid/5/1/2").headers["Content-Type"] == "image/jpeg"
+
+
+def test_google_tile_route_rejects_an_unknown_map_type(client, monkeypatch):
+    def _unknown(*_):
+        raise api.UnknownMapType("nope")
+
+    monkeypatch.setattr(api, "fetch_tile", _unknown)
+    assert client.get("/tiles/google/streetview/5/1/2").status_code == 404
+
+
+def test_google_tile_route_reports_upstream_failure(client, monkeypatch):
+    def _fail(*_):
+        raise api.GoogleTilesError("boom")
+
+    monkeypatch.setattr(api, "fetch_tile", _fail)
+    assert client.get("/tiles/google/roadmap/5/1/2").status_code == 502
+
+
+def test_config_lists_the_google_map_types_the_server_offers(client, monkeypatch):
+    monkeypatch.setattr(api, "offered_map_types", lambda: [{"type": "roadmap", "label": "Google Roadmap"}])
+    assert client.get("/config").get_json()["google_map_types"] == [
+        {"type": "roadmap", "label": "Google Roadmap"}
+    ]
 
 
 def test_status_is_null_before_any_fetch(client):

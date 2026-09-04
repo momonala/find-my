@@ -26,3 +26,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # dashboard's map style picker (see GET /config). Unset keeps the free
 # CARTO/OSM raster styles only.
 MAPTILER_API_KEY = os.environ.get("MAPTILER_API_KEY", "")
+
+# Optional Google Cloud key for the Map Tiles API, which adds Google's styles to
+# the dashboard's picker. Unlike MAPTILER_API_KEY it is never sent to the
+# browser; src/google_tiles.py explains why. Unset hides those styles.
+GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")

@@ -16,6 +16,7 @@ not a server-rendered view, so it has no server-side state of its own.
 """
 
 import atexit
+import logging
 import math
 import sqlite3
 from typing import Any
@@ -48,8 +49,16 @@ from src.env import API_WRITE_TOKEN
 from src.env import MAPTILER_API_KEY
 from src.env import TELEGRAM_API_TOKEN
 from src.env import TELEGRAM_CHAT_ID
+from src.google_tiles import GoogleTilesError
+from src.google_tiles import UnknownMapType
+from src.google_tiles import fetch_tile
+from src.google_tiles import is_configured as google_tiles_configured
+from src.google_tiles import offered_map_types
+from src.google_tiles import prune_tile_cache
 from src.poller import start_background_poller
 from src.tracking import distance_from_home_m_at
+
+logger = logging.getLogger(__name__)
 
 _VALID_ALERT_TYPES = {"movement", "enter", "exit"}
 _VALID_ANCHORS = {"home", "current"}
@@ -217,6 +226,8 @@ def create_app(*, start_poller: bool = True) -> Flask:
     one process writes to the database.
     """
     init_db()
+    if google_tiles_configured():
+        prune_tile_cache()
 
     app = Flask(__name__)
 
@@ -243,8 +254,25 @@ def create_app(*, start_poller: bool = True) -> Flask:
                 "home_longitude": HOME_LONGITUDE,
                 "telegram_configured": bool(TELEGRAM_API_TOKEN and TELEGRAM_CHAT_ID),
                 "maptiler_key": MAPTILER_API_KEY,
+                "google_map_types": offered_map_types(),
             }
         )
+
+    @app.get("/tiles/google/<map_type>/<int:z>/<int:x>/<int:y>")
+    def get_google_tile(map_type: str, z: int, x: int, y: int) -> ResponseReturnValue:
+        """Proxy one Google Map Tiles raster tile (see src/google_tiles.py)."""
+        try:
+            image, content_type = fetch_tile(map_type, z, x, y)
+        except UnknownMapType:
+            abort(404)
+        except GoogleTilesError as error:
+            logger.warning("Google tile fetch failed: %s", error)
+            return jsonify({"error": str(error)}), 502
+        response = app.response_class(image, mimetype=content_type)
+        # Basemap imagery is effectively static, so let the browser skip even
+        # the proxy hop.
+        response.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+        return response
 
     @app.get("/status")
     def get_status() -> ResponseReturnValue:

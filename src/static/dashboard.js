@@ -355,6 +355,7 @@
         showWarning("Telegram alerts aren't configured on the server -- triggered alerts will only show here.");
       }
       addMapTilerStyles(config.maptiler_key);
+      addGoogleStyles(config.google_map_types);
     } catch (error) {
       console.error("Failed to load /config", error);
       showFatalError("Could not load home coordinates; centering the map on (0, 0).");
@@ -387,6 +388,7 @@
   const MAPTILER_ATTRIBUTION =
     '&copy; <a href="https://www.maptiler.com/copyright/" target="_blank" rel="noopener noreferrer">MapTiler</a> ' +
     OSM_ATTRIBUTION;
+  const GOOGLE_ATTRIBUTION = "Map data &copy; Google";
 
   const MAP_STYLES = [
     {
@@ -400,6 +402,7 @@
       label: "Dark Matter",
       url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       attribution: CARTO_ATTRIBUTION,
+      boostContrast: true,
     },
     {
       key: "positron",
@@ -426,15 +429,37 @@
   ];
 
   function addMapTilerStyles(key) {
-    if (!key || MAP_STYLES.some((style) => style.key.startsWith("maptiler-"))) return;
-    for (const { key: styleKey, label, path } of MAPTILER_STYLES) {
-      MAP_STYLES.push({
+    if (!key) return;
+    appendStyles(
+      "maptiler-",
+      MAPTILER_STYLES.map(({ key: styleKey, label, path }) => ({
         key: styleKey,
         label,
         url: `https://api.maptiler.com/${path}?key=${key}`,
         attribution: MAPTILER_ATTRIBUTION,
-      });
-    }
+      })),
+    );
+  }
+
+  // Google tiles come through the server rather than a direct CDN URL, and the
+  // server owns which types exist -- /config reports them (src/google_tiles.py).
+  function addGoogleStyles(mapTypes) {
+    if (!mapTypes || !mapTypes.length) return;
+    appendStyles(
+      "google-",
+      mapTypes.map(({ type, label }) => ({
+        key: `google-${type}`,
+        label,
+        url: `/tiles/google/${type}/{z}/{x}/{y}`,
+        attribution: GOOGLE_ATTRIBUTION,
+      })),
+    );
+  }
+
+  // /config can resolve after a re-render, so adding is idempotent on the prefix.
+  function appendStyles(keyPrefix, styles) {
+    if (MAP_STYLES.some((style) => style.key.startsWith(keyPrefix))) return;
+    MAP_STYLES.push(...styles);
     updateMapStyleDialog();
   }
 
@@ -448,6 +473,7 @@
   function applyMapStyle(key) {
     const style = MAP_STYLES.find((candidate) => candidate.key === key) || MAP_STYLES[0];
     if (activeTileLayer) map.removeLayer(activeTileLayer);
+    map.getContainer().classList.toggle("map-boost-contrast", Boolean(style.boostContrast));
     activeTileLayer = L.tileLayer(style.url, {
       attribution: style.attribution,
       subdomains: "abcd",
