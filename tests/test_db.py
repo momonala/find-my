@@ -1,4 +1,4 @@
-"""Tests for src/db.py.
+"""Tests for src/findmy/db.py.
 
 These tests verify that:
 1. A device's metadata is recorded even without a location
@@ -8,19 +8,19 @@ These tests verify that:
 5. Alerts can be created, listed, deleted, and have their triggered state updated
 """
 
-from src.db import alerts_for_device
-from src.db import all_latest_locations
-from src.db import create_alert
-from src.db import get_alert
-from src.db import history_for
-from src.db import latest_location_for
-from src.db import list_alerts
-from src.db import log_alert_event
-from src.db import record_fetch
-from src.db import remove_alert
-from src.db import set_alert_active
-from src.db import set_device_icon
-from src.db import update_alert
+from src.findmy.db import alerts_for_device
+from src.findmy.db import all_latest_locations
+from src.findmy.db import create_alert
+from src.findmy.db import get_alert
+from src.findmy.db import history_for
+from src.findmy.db import latest_location_for
+from src.findmy.db import list_alerts
+from src.findmy.db import log_alert_event
+from src.findmy.db import record_fetch
+from src.findmy.db import remove_alert
+from src.findmy.db import set_alert_active
+from src.findmy.db import set_device_icon
+from src.findmy.db import update_alert
 from tests.conftest import make_item
 from tests.conftest import make_location
 from tests.conftest import minutes_later
@@ -211,10 +211,10 @@ def test_log_alert_event_triggered_at_is_the_latest_event(conn):
 def test_init_db_is_idempotent(conn, tmp_path):
     """Re-initialising an existing database preserves its rows.
 
-    `init_db` runs on every `findmy serve` boot, so it has to be safe to
+    `init_db` runs on every `mycloud serve` boot, so it has to be safe to
     re-apply to a database that already holds history.
     """
-    from src.db import init_db
+    from src.core.db import init_db
 
     record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
     init_db(tmp_path / "findmy.db")
@@ -233,12 +233,12 @@ def test_init_db_runs_alembic_migrations_to_head(tmp_path):
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
-    import src.db as db_module
-    from src.db import get_connection
-    from src.db import init_db
+    import src.core.db as core_db
+    from src.core.db import get_connection
+    from src.core.db import init_db
 
-    config = Config(str(db_module._ALEMBIC_INI))
-    config.set_main_option("script_location", str(db_module._MIGRATIONS_DIR))
+    config = Config(str(core_db._ALEMBIC_INI))
+    config.set_main_option("script_location", str(core_db._MIGRATIONS_DIR))
     expected_head = ScriptDirectory.from_config(config).get_current_head()
 
     db_path = tmp_path / "findmy.db"

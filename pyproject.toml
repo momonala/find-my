@@ -1,7 +1,7 @@
 [project]
-name = "find-my"
+name = "my-cloud"
 version = "0.1.0"
-description = "CLI for Apple Find My: locate iCloud devices and AirTags with distance from home"
+description = "Personal iCloud tools: Find My tracking and a photo-library backup, behind one web app"
 authors = [{name = "Mohit Nalavadi"}]
 readme = "README.md"
 # Upper bound is deliberate: cryptography (via pyicloud) has no 3.14 wheel yet,
@@ -14,21 +14,21 @@ dependencies = [
     "pyicloud>=2.6.5",
     "requests>=2.32.0",
     # Both also arrive transitively (pydantic via pyicloud, rich via typer), but
-    # src/google_tiles.py and src/tracking.py import them directly and a
+    # src/maps/google_tiles.py and src/findmy/tracking.py import them directly and a
     # transitive dependency is not a contract.
     "pydantic>=2.0.0",
     "rich>=13.0.0",
-    # Disk cache for proxied Google map tiles (src/google_tiles.py), which are
+    # Disk cache for proxied Google map tiles (src/maps/google_tiles.py), which are
     # billed per request.
     "joblib>=1.3.0",
-    # Pinned exactly: src/batch_reports.py drives semi-internal APIs
+    # Pinned exactly: src/findmy/batch_reports.py drives semi-internal APIs
     # (fetch_raw_reports, LocationReport.decrypt, update_alignment) that this
     # reverse-engineered library can change in a patch release.
     "findmy==0.10.1",
     "spyglass",
     # Schema migrations for data/findmy.db (see migrations/) -- run automatically
-    # by src/db.py's init_db() on every boot. sqlalchemy is Alembic's own
-    # dependency; the app itself still talks to sqlite directly (src/db.py's
+    # by src/core/db.py's init_db() on every boot. sqlalchemy is Alembic's own
+    # dependency; the app itself still talks to sqlite directly (src/core/db.py's
     # get_connection/connection), not through sqlalchemy.
     "alembic>=1.13.0",
     "sqlalchemy>=2.0.0",
@@ -51,11 +51,11 @@ dev = [
 # resolution this needs.
 home_latitude = 52.55214
 home_longitude = 13.39984
-# Port `findmy serve` binds by default, and the one install/install.sh points
+# Port `mycloud serve` binds by default, and the one install/install.sh points
 # the Cloudflare tunnel at.
 flask_port = 5016
 spyglass_host = "localhost:5013"  # where this service's own metrics/logs are shipped
-spyglass_dashboard_url = "https://spyglass.mnalavadi.org/dashboard/find-my"
+spyglass_dashboard_url = "https://spyglass.mnalavadi.org/dashboard/my-cloud"
 
 [build-system]
 requires = ["hatchling"]
@@ -65,8 +65,8 @@ build-backend = "hatchling.build"
 packages = ["src"]
 
 [project.scripts]
-config = "src.config:main"
-findmy = "src.cli:main"
+config = "src.core.config:main"
+mycloud = "src.cli:main"
 
 [tool.black]
 line-length = 110
@@ -103,9 +103,10 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true
-# src/ has no __init__.py (a deliberate namespace package, not a mypy oversight),
-# so without this mypy sees "src/batch_reports.py" as two different modules
-# depending on whether it's imported as `batch_reports` or `src.batch_reports`.
+# src/ and its subpackages have no __init__.py (deliberate namespace packages,
+# not a mypy oversight), so without this mypy sees "src/findmy/batch_reports.py"
+# as two different modules depending on whether it's imported as
+# `findmy.batch_reports` or `src.findmy.batch_reports`.
 explicit_package_bases = true
 mypy_path = "."
 

@@ -9,7 +9,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 REMOTE_HOST="pi-cloud"
-REMOTE_DIR="/home/mnalavadi/find-my"
+REMOTE_DIR="/home/mnalavadi/my-cloud"
 
 cd "$(dirname "$0")"
 

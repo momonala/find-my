@@ -6,7 +6,7 @@ history (triggered_at -- only ever the *last* firing, nothing before it).
 
 This splits out trigger history into `alert_events`, one row per firing.
 `alerts.is_active` stays where it is -- it's current enter/exit state, not
-history. `alerts.triggered_at` is dropped; src/db.py's projection now computes
+history. `alerts.triggered_at` is dropped; src/findmy/db.py's projection now computes
 it as MAX(alert_events.triggered_at) so the API/dashboard shape is unchanged.
 
 Revision ID: 0003

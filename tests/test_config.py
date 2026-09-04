@@ -1,11 +1,11 @@
-"""Tests for src/config.py.
+"""Tests for src/core/config.py.
 
 These tests verify that:
 1. Individual config keys return their values, in both the flag and bare forms
 2. --all returns every configuration value
 3. A missing or unknown key produces an error
 
-The real `src.config.app` is exercised rather than a locally-assembled Typer
+The real `src.core.config.app` is exercised rather than a locally-assembled Typer
 app, because the flag form (`--project-name`) depends on that app's
 `ignore_unknown_options` context settings -- which is exactly what
 install/install.sh relies on.
@@ -14,7 +14,7 @@ install/install.sh relies on.
 import pytest
 from typer.testing import CliRunner
 
-from src.config import app
+from src.core.config import app
 
 runner = CliRunner()
 
@@ -22,7 +22,7 @@ runner = CliRunner()
 @pytest.mark.parametrize(
     "flag,expected_output",
     [
-        ("--project-name", "find-my"),
+        ("--project-name", "my-cloud"),
         ("--project-version", "0.1.0"),
         ("--home-latitude", "52.55214"),
         ("--home-longitude", "13.39984"),
@@ -45,7 +45,7 @@ def test_config_all_returns_all_values():
     result = runner.invoke(app, ["--all"])
 
     assert result.exit_code == 0
-    assert "project_name=find-my" in result.stdout
+    assert "project_name=my-cloud" in result.stdout
     assert "project_version=0.1.0" in result.stdout
     assert "flask_port=5016" in result.stdout
 

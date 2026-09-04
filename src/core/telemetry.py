@@ -9,7 +9,7 @@ duplicate log handler and double-ship every log line.
 
 from spyglass import initialize
 
-from src.config import PROJECT_NAME
-from src.config import SPYGLASS_HOST
+from src.core.config import PROJECT_NAME
+from src.core.config import SPYGLASS_HOST
 
 logger, metrics = initialize(host=SPYGLASS_HOST, project=PROJECT_NAME)

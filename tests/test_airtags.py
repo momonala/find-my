@@ -1,4 +1,4 @@
-"""Tests for src/airtags.py's tracker key cache, alignment, and VM recycling.
+"""Tests for src/findmy/airtags.py's tracker key cache, alignment, and VM recycling.
 
 The master keys in `.icloud_session/trackers.json` cannot be regenerated on a
 non-macOS host, so what is pinned here is that nothing on the poll path writes
@@ -18,8 +18,8 @@ from datetime import datetime
 
 import pytest
 
-import src.airtags as airtags
-import src.db as db
+import src.core.db as core_db
+import src.findmy.airtags as airtags
 
 PAIRED_AT = datetime(2026, 8, 1, tzinfo=UTC)
 
@@ -41,8 +41,8 @@ def make_accessory(identifier: str = "ID-1", master_key: bytes = b"\x01" * 28):
 def session_dir(tmp_path, monkeypatch):
     """Point the tracker cache and the database at temp locations."""
     monkeypatch.setattr(airtags, "_TRACKERS_FILE", tmp_path / "trackers.json")
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "findmy.db")
-    db.init_db()
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "findmy.db")
+    core_db.init_db()
     return tmp_path
 
 
@@ -162,10 +162,10 @@ def test_real_accessory_still_exposes_the_alignment_fields():
 
 
 def test_a_lookup_survives_a_database_with_no_alignment_table(tmp_path, monkeypatch):
-    """`findmy airtags` and `findmy all` never call init_db(), so the table can
+    """`mycloud airtags` and `mycloud all` never call init_db(), so the table can
     be absent -- the cache must degrade, not raise."""
     monkeypatch.setattr(airtags, "_TRACKERS_FILE", tmp_path / "trackers.json")
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "unmigrated.db")
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "unmigrated.db")
     airtags._save_trackers([make_accessory()])
 
     trackers = airtags.load_trackers()

@@ -7,7 +7,7 @@ the Google styles at all.
 Unlike the CARTO/MapTiler basemaps, Google's 2D tiles are not a plain
 {z}/{x}/{y} URL the browser can hit directly: each request needs a *session
 token* minted by POST /v1/createSession, and every tile is billed against a
-100k/month free allowance. So the key stays server-side, src/api.py proxies
+100k/month free allowance. So the key stays server-side, src/web/app.py proxies
 tiles through GET /tiles/google/<map_type>/<z>/<x>/<y>, and downloads are cached
 on disk -- a dashboard centred on one home area converges on a few hundred
 tiles, so cache hits are what keep it free across browsers and restarts.
@@ -31,9 +31,9 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import ValidationError
 
-from src.db import DATA_DIR
-from src.env import GOOGLE_MAPS_API_KEY
-from src.telemetry import metrics
+from src.core.env import GOOGLE_MAPS_API_KEY
+from src.core.paths import DATA_DIR
+from src.core.telemetry import metrics
 
 logger = logging.getLogger(__name__)
 

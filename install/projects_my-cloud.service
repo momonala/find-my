@@ -1,12 +1,12 @@
 [Unit]
-Description=Find My dashboard and read-only API
+Description=my-cloud web app: Find My and Photos
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-WorkingDirectory=/home/mnalavadi/find-my
+WorkingDirectory=/home/mnalavadi/my-cloud
 Type=idle
-ExecStart=/home/mnalavadi/.local/bin/uv run findmy serve
+ExecStart=/home/mnalavadi/.local/bin/uv run mycloud serve
 User=mnalavadi
 
 # The poller handles its own exceptions, so an exit means something it could
@@ -14,7 +14,7 @@ User=mnalavadi
 Restart=always
 RestartSec=10
 
-# Backstop against the Anisette VM recycling in src/airtags.py failing, whose
+# Backstop against the Anisette VM recycling in src/findmy/airtags.py failing, whose
 # failure mode is accumulating VMs rather than a crash. Steady state is ~165 MB;
 # hitting this means that recycling needs looking at. See "Why RAM saw-tooths"
 # in README.md.

@@ -1,6 +1,6 @@
 """baseline schema
 
-Mirrors the schema src/db.py's `_CREATE_TABLES` used to create directly
+Mirrors the schema the app used to create directly with raw DDL
 (before schema ownership moved to Alembic): devices, location_history,
 device_icons, and alerts (already on the movement/enter/exit split -- the
 'proximity' type was retired and any existing rows fixed up by hand before

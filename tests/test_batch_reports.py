@@ -1,7 +1,7 @@
 """
 Tests for batched Find My report fetching.
 
-src/batch_reports.py drives semi-internal `findmy` APIs, so these tests pin the
+src/findmy/batch_reports.py drives semi-internal `findmy` APIs, so these tests pin the
 behaviour that a library upgrade could silently break:
 1. Key groups never exceed Apple's per-list limit
 2. Every queried key can be traced back to its accessory
@@ -15,10 +15,9 @@ from datetime import datetime
 from datetime import timedelta
 
 from findmy import KeyPairType
-
-from src.batch_reports import _MAX_KEYS_PER_GROUP
-from src.batch_reports import _apply
-from src.batch_reports import _build_groups
+from src.findmy.batch_reports import _MAX_KEYS_PER_GROUP
+from src.findmy.batch_reports import _apply
+from src.findmy.batch_reports import _build_groups
 
 _NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
 

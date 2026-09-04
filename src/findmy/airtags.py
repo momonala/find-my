@@ -29,26 +29,26 @@ from datetime import datetime
 from typing import Any
 
 import typer
+from findmy.accessory import FindMyAccessory
+from findmy.plist import list_accessories
+
 from findmy import AppleAccount
 from findmy import AsyncAppleAccount
 from findmy import LocalAnisetteProvider
 from findmy import LocationReport
 from findmy import LoginState
 from findmy import TrustedDeviceSecondFactorMethod
-from findmy.accessory import FindMyAccessory
-from findmy.plist import list_accessories
-
-from src.batch_reports import locate_accessories
-from src.db import connection
-from src.db import load_tracker_alignment
-from src.db import save_tracker_alignment
-from src.errors import InteractiveAuthRequiredError
-from src.errors import TwoFactorRejectedError
-from src.errors import UnsupportedPlatformError
-from src.tracking import SESSION_DIR
-from src.tracking import Location
-from src.tracking import TrackedItem
-from src.tracking import require_credentials
+from src.core.db import connection
+from src.core.errors import InteractiveAuthRequiredError
+from src.core.errors import TwoFactorRejectedError
+from src.core.errors import UnsupportedPlatformError
+from src.core.paths import SESSION_DIR
+from src.findmy.batch_reports import locate_accessories
+from src.findmy.db import load_tracker_alignment
+from src.findmy.db import save_tracker_alignment
+from src.findmy.tracking import Location
+from src.findmy.tracking import TrackedItem
+from src.findmy.tracking import require_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ _TRACKERS_FILE = SESSION_DIR / "trackers.json"
 # Apple's own devices report a model like "iPhone14,5" or "MacBookPro11,4",
 # while AirTags and third-party trackers use human-readable names such as
 # "AirTag (2nd generation)" or "Sualio Tag". Apple devices appear in the local
-# key store too, but src/find_my.py already covers them — and skipping them here
+# key store too, but src/findmy/devices.py already covers them — and skipping them here
 # avoids a slow historical rolling-key scan for hardware that rarely reports.
 _APPLE_DEVICE_MODEL = re.compile(r"^[A-Za-z]+\d+,\d+$")
 
@@ -140,8 +140,8 @@ def _apply_alignment(trackers: list[FindMyAccessory]) -> None:
     Alignment is how far through its key rotation a tracker was last seen;
     without it a locate rescans up to a week of keys. Purely a cache, so every
     miss degrades rather than fails: `update_alignment` keeps the newer value,
-    and a database error is logged and skipped -- `findmy airtags` and
-    `findmy all` locate without ever calling `init_db()`, so the table may not
+    and a database error is logged and skipped -- `mycloud airtags` and
+    `mycloud all` locate without ever calling `init_db()`, so the table may not
     exist at all.
     """
     try:
@@ -228,7 +228,7 @@ def _ensure_session() -> None:
         if not sys.stdin.isatty():
             raise InteractiveAuthRequiredError(
                 "Apple requires a 2FA code, but there is no terminal to prompt on. "
-                "Run `uv run findmy airtags` once at the console, then retry."
+                "Run `uv run mycloud airtags` once at the console, then retry."
             )
         method = next(
             (m for m in account.get_2fa_methods() if isinstance(m, TrustedDeviceSecondFactorMethod)),

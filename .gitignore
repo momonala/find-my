@@ -97,7 +97,7 @@ static/*.html
 # iCloud session cookies (avoid re-triggering 2FA on every run)
 .icloud_session/
 
-# Location history DB written by `findmy serve` / `findmy poll` (see src/db.py)
+# Location history DB written by `mycloud serve` / `mycloud poll` (see src/core/db.py)
 data/
 
 # `script(1)` session captures

@@ -1,6 +1,6 @@
 """Evaluate configured alerts against freshly-written location fixes.
 
-Called from src/poller.py right after src.db.record_fetch, inside the same
+Called from src/findmy/poller.py right after src.findmy.db.record_fetch, inside the same
 transaction. Only devices that got a new `location_history` row this cycle are
 checked -- for every alert type, nothing about the movement delta or the
 distance to the anchor changes without a new fix.
@@ -20,7 +20,7 @@ transition leaves `is_active` untouched and so is retried on the next cycle,
 landing late rather than being lost.
 
 Delivery is in-app (the dashboard reads `is_active`/`triggered_at` off
-GET /alerts) plus an optional Telegram push from src/telegram.py.
+GET /alerts) plus an optional Telegram push from src/findmy/telegram.py.
 """
 
 import logging
@@ -31,14 +31,14 @@ from datetime import datetime
 
 import requests
 
-import src.db as db
-from src.config import HOME_LATITUDE
-from src.config import HOME_LONGITUDE
-from src.telegram import send_enter_alert
-from src.telegram import send_exit_alert
-from src.telegram import send_movement_alert
-from src.telemetry import metrics
-from src.tracking import haversine_m
+import src.findmy.db as db
+from src.core.config import HOME_LATITUDE
+from src.core.config import HOME_LONGITUDE
+from src.core.telemetry import metrics
+from src.findmy.telegram import send_enter_alert
+from src.findmy.telegram import send_exit_alert
+from src.findmy.telegram import send_movement_alert
+from src.findmy.tracking import haversine_m
 
 logger = logging.getLogger(__name__)
 

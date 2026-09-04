@@ -1,4 +1,4 @@
-"""Tests for src/alerts.py's check_alerts().
+"""Tests for src/findmy/alerts.py's check_alerts().
 
 Exercised directly against a seeded connection, mirroring tests/test_db.py's
 style -- check_alerts is called from the poller with whatever moved_device_ids
@@ -12,14 +12,14 @@ from unittest.mock import patch
 
 import requests
 
-from src.alerts import ALERT_COOLDOWN_S
-from src.alerts import check_alerts
-from src.config import HOME_LATITUDE
-from src.config import HOME_LONGITUDE
-from src.db import alerts_for_device
-from src.db import create_alert
-from src.db import log_alert_event
-from src.db import record_fetch
+from src.core.config import HOME_LATITUDE
+from src.core.config import HOME_LONGITUDE
+from src.findmy.alerts import ALERT_COOLDOWN_S
+from src.findmy.alerts import check_alerts
+from src.findmy.db import alerts_for_device
+from src.findmy.db import create_alert
+from src.findmy.db import log_alert_event
+from src.findmy.db import record_fetch
 from tests.conftest import make_item
 from tests.conftest import make_location
 from tests.conftest import minutes_later
@@ -242,7 +242,7 @@ def test_enter_alert_does_not_refire_within_the_cooldown_across_a_bounce(conn):
     assert alert["is_active"] == 0
 
 
-@patch("src.alerts.send_movement_alert")
+@patch("src.findmy.alerts.send_movement_alert")
 def test_movement_alert_notifies_telegram_when_it_fires(mock_send, conn):
     record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
     create_alert(conn, "tag-1", "movement", 100)
@@ -254,7 +254,7 @@ def test_movement_alert_notifies_telegram_when_it_fires(mock_send, conn):
     assert mock_send.call_args.args[0]["device_id"] == "tag-1"
 
 
-@patch("src.alerts.send_movement_alert")
+@patch("src.findmy.alerts.send_movement_alert")
 def test_movement_alert_does_not_notify_when_it_does_not_fire(mock_send, conn):
     record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
     create_alert(conn, "tag-1", "movement", 100)
@@ -265,7 +265,7 @@ def test_movement_alert_does_not_notify_when_it_does_not_fire(mock_send, conn):
     mock_send.assert_not_called()
 
 
-@patch("src.alerts.send_movement_alert", side_effect=requests.RequestException("down"))
+@patch("src.findmy.alerts.send_movement_alert", side_effect=requests.RequestException("down"))
 def test_a_failed_telegram_send_does_not_stop_the_rest_of_the_cycle(mock_send, conn):
     """One alert's notification failing must not prevent other alerts (or
     other devices) from being evaluated and recorded in-app this cycle."""
@@ -288,7 +288,7 @@ def test_a_failed_telegram_send_does_not_stop_the_rest_of_the_cycle(mock_send, c
     assert alerts_for_device(conn, "tag-2")[0]["triggered_at"] is not None
 
 
-@patch("src.alerts.send_enter_alert")
+@patch("src.findmy.alerts.send_enter_alert")
 def test_enter_alert_notifies_telegram_on_entering_only(mock_send, conn):
     record_fetch(conn, [make_item("tag-1", make_location(HOME_LATITUDE + 1, HOME_LONGITUDE))])
     create_alert(conn, "tag-1", "enter", 100)
@@ -306,7 +306,7 @@ def test_enter_alert_notifies_telegram_on_entering_only(mock_send, conn):
     assert mock_send.call_count == 1  # still just the one call, from entering
 
 
-@patch("src.alerts.send_exit_alert")
+@patch("src.findmy.alerts.send_exit_alert")
 def test_exit_alert_notifies_telegram_on_leaving_only(mock_send, conn):
     record_fetch(conn, [make_item("tag-1", make_location(HOME_LATITUDE + 1, HOME_LONGITUDE))])  # far away
     create_alert(conn, "tag-1", "exit", 100)

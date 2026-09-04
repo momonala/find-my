@@ -435,7 +435,7 @@ wheels = [
 ]
 
 [[package]]
-name = "find-my"
+name = "my-cloud"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

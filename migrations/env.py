@@ -1,7 +1,7 @@
 """Alembic migration environment.
 
 No ORM models here -- migrations/versions/*.py write raw SQL via `op.execute`,
-matching src/db.py's own raw-sqlite3 style rather than introducing SQLAlchemy
+matching src/core/db.py's own raw-sqlite3 style rather than introducing SQLAlchemy
 Core table definitions just for this. That also means `--autogenerate` has
 nothing to diff against; new migrations are written by hand.
 """

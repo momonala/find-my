@@ -2,7 +2,7 @@
 
 Covers iPhones, iPads, Macs and AirPods — hardware that reports its own
 location. AirTags and third-party trackers are not served by this API at all;
-see src/airtags.py for those.
+see src/findmy/airtags.py for those.
 
 Authenticates via pyicloud, prompting for a 2FA code on first run. Session
 cookies are cached in .icloud_session/ so later runs skip verification.
@@ -18,15 +18,15 @@ from pyicloud import PyiCloudService
 from pyicloud.exceptions import PyiCloudAuthRequiredException
 from pyicloud.exceptions import PyiCloudFailedLoginException
 
-from src.errors import InteractiveAuthRequiredError
-from src.errors import LoginFailedError
-from src.errors import TwoFactorRejectedError
-from src.tracking import SESSION_DIR
-from src.tracking import Location
-from src.tracking import TrackedItem
-from src.tracking import require_credentials
+from src.core.errors import InteractiveAuthRequiredError
+from src.core.errors import LoginFailedError
+from src.core.errors import TwoFactorRejectedError
+from src.core.paths import SESSION_DIR
+from src.findmy.tracking import Location
+from src.findmy.tracking import TrackedItem
+from src.findmy.tracking import require_credentials
 
-# Mirrors POLL_INTERVAL_SECONDS in src/poller.py -- not imported from there
+# Mirrors POLL_INTERVAL_SECONDS in src/findmy/poller.py -- not imported from there
 # because the poller imports this module. pyicloud refreshes device locations on
 # a background thread at this interval, so leaving it at pyicloud's five-minute
 # default would have the poller rewriting the same stale fix for five cycles.
@@ -60,7 +60,7 @@ def _authenticate() -> PyiCloudService:
         if not sys.stdin.isatty():
             raise InteractiveAuthRequiredError(
                 "Apple requires a 2FA code, but there is no terminal to prompt on. "
-                "Run `uv run findmy devices` once at the console, then retry."
+                "Run `uv run mycloud devices` once at the console, then retry."
             )
         code = typer.prompt("Enter the 2FA code sent to your trusted device")
         if not api.validate_2fa_code(code):

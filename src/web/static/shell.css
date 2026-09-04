@@ -1,0 +1,426 @@
+/* Chrome every page shares: the reset, the nav bar, the banner stack, the
+   generic controls, and the <dialog> styles that go with static/dialogs.js.
+   Anything only one page uses belongs in that page's own sheet. */
+
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-bg);
+  line-height: 1.45;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+button {
+  font: inherit;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.btn-floating {
+  font: inherit;
+  font-size: 0.85rem;
+  height: var(--toolbar-height);
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(10px);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0 var(--space-3);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition:
+    background-color var(--duration-quick) var(--ease-smooth-out),
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    color var(--duration-quick) var(--ease-smooth-out);
+}
+
+.btn-floating:hover {
+  border-color: var(--color-accent);
+}
+
+.btn-floating[aria-pressed="true"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+}
+
+.btn-icon {
+  padding: 0;
+  width: var(--toolbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  background: var(--color-border);
+  border: none;
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background-color var(--duration-quick) var(--ease-smooth-out);
+  padding: 0;
+}
+
+.toggle-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform var(--duration-quick) var(--ease-smooth-out);
+}
+
+.toggle-switch[aria-checked="true"] {
+  background: var(--color-accent);
+}
+
+.toggle-switch[aria-checked="true"]::after {
+  transform: translateX(18px);
+}
+
+/* Fixed rather than absolute: the stack is part of the shell's chrome, above
+   every page's content, so it can't hang off whichever page happens to
+   establish a containing block. The offset clears the nav bar and, on the
+   Find My page, the map toolbar under it -- both from tokens, so neither can
+   drift out of sync with the real heights. */
+.banner-stack {
+  position: fixed;
+  top: calc(var(--nav-height) + var(--space-4) + var(--toolbar-height) + var(--space-2));
+  right: var(--space-4);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 320px;
+}
+
+.error-banner,
+.warning-banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  box-shadow: var(--shadow-md);
+  /* Enter only. `hidden` toggles display:none with no opacity change of its
+     own, so transitioning `display` here would just hold the banner visible
+     for the duration and then blink it out -- worse than an instant hide. */
+  transition:
+    opacity var(--duration-fast) var(--ease-smooth-out),
+    transform var(--duration-fast) var(--ease-smooth-out);
+}
+
+.error-banner {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.warning-banner {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+@starting-style {
+  .error-banner:not([hidden]),
+  .warning-banner:not([hidden]) {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-2)));
+  }
+}
+
+/* --- Dialogs -------------------------------------------------------------
+   The icon editor, map style picker and alert editor are all <dialog>s built
+   by the shared helpers in dashboard.js, so they share one set of styles here.
+   Only genuinely per-dialog differences get their own rule below. */
+
+.app-dialog {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-4);
+  min-width: 260px;
+}
+
+.app-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* Scale + fade both directions, driven purely by the [open] attribute, so
+   every close path (Esc, form submit via method="dialog", the Cancel button)
+   animates without needing a JS hook per dialog.
+
+   The base rule is the *closed* state and carries the close duration; [open]
+   is the open state and carries the (slower) open duration -- a transition is
+   read from the style being transitioned *into*, which is how one element
+   gets asymmetric in/out timing. @starting-style supplies the pre-open values
+   so the first frame after showModal() starts small instead of snapping in.
+
+   `display` and `overlay` need allow-discrete or the dialog would leave the
+   top layer on frame one and the close animation would never be seen. */
+.app-dialog {
+  opacity: 0;
+  transform: scale(var(--modal-scale));
+  transition:
+    opacity var(--duration-quick) var(--ease-smooth-out),
+    transform var(--duration-quick) var(--ease-smooth-out),
+    display var(--duration-quick) allow-discrete,
+    overlay var(--duration-quick) allow-discrete;
+}
+
+.app-dialog[open] {
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity var(--duration-fast) var(--ease-smooth-out),
+    transform var(--duration-fast) var(--ease-smooth-out),
+    display var(--duration-fast) allow-discrete,
+    overlay var(--duration-fast) allow-discrete;
+}
+
+.app-dialog::backdrop {
+  opacity: 0;
+  transition:
+    opacity var(--duration-quick) var(--ease-smooth-out),
+    display var(--duration-quick) allow-discrete;
+}
+
+.app-dialog[open]::backdrop {
+  opacity: 1;
+  transition:
+    opacity var(--duration-fast) var(--ease-smooth-out),
+    display var(--duration-fast) allow-discrete;
+}
+
+@starting-style {
+  .app-dialog[open] {
+    opacity: 0;
+    transform: scale(var(--modal-scale));
+  }
+
+  .app-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+}
+
+/* Reads as a heading over the fields under it through size, weight and full
+   contrast -- the fields themselves are 0.85rem, regular weight. */
+.dialog-section-title {
+  margin: 0 0 var(--space-3);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dialog-section-title:not(:first-child) {
+  margin-top: var(--space-4);
+}
+
+.dialog-input,
+.dialog-select {
+  font: inherit;
+  font-size: 0.9rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  transition: border-color var(--duration-quick) var(--ease-smooth-out);
+}
+
+.dialog-select {
+  width: 100%;
+  cursor: pointer;
+}
+
+.dialog-select:hover,
+.dialog-select:focus {
+  border-color: var(--color-accent);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.dialog-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  padding: var(--space-2) 0;
+  cursor: default;
+}
+
+/* --- Nav bar ---------------------------------------------------------------
+   A fixed-height row above the page content rather than a collapsible menu:
+   body is a flex column, so a page below it (the map, say) can take the rest
+   of the viewport with `flex: 1` and no height calculation to keep in sync.
+   It stays visible at every width -- at this item count a burger would hide
+   two links behind a tap. */
+
+.app-nav {
+  flex: 0 0 auto;
+  height: var(--nav-height);
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  /* Drawn on the link's own bottom edge so the active page reads as attached
+     to its content, rather than as a selected chip floating in the bar. */
+  border-bottom: 2px solid transparent;
+  transition:
+    color var(--duration-quick) var(--ease-smooth-out),
+    border-color var(--duration-quick) var(--ease-smooth-out);
+}
+
+.nav-link:hover {
+  color: var(--color-text);
+}
+
+.nav-link[aria-current="page"] {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.nav-icon {
+  flex-shrink: 0;
+}
+
+/* --- Ordinary document pages ---------------------------------------------
+   The Find My page fills the viewport with a map; a page that is just content
+   scrolls inside this instead. */
+
+.page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-4);
+}
+
+.page-inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.page-title {
+  margin: 0 0 var(--space-5);
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.card-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-3);
+}
+
+/* A border, not a shadow: these sit on the flat page background rather than
+   floating over a map, so an edge is all they need to read as a target. */
+.card-link {
+  display: block;
+  height: 100%;
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    background-color var(--duration-quick) var(--ease-smooth-out);
+}
+
+.card-link:hover {
+  border-color: var(--color-accent);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.card-summary {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 640px) {
+  .btn-icon {
+    width: calc(var(--toolbar-height) * 0.85);
+  }
+
+  .banner-stack {
+    left: var(--space-2);
+    right: var(--space-2);
+    max-width: none;
+  }
+}

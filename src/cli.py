@@ -1,6 +1,6 @@
-"""Single entry point for Find My lookups: `uv run findmy <command>`.
+"""Single entry point for Find My lookups: `uv run mycloud <command>`.
 
-Presentation lives here; src/find_my.py and src/airtags.py just return
+Presentation lives here; src/findmy/devices.py and src/findmy/airtags.py just return
 `list[TrackedItem]`, so every command shares the same sorting and output paths.
 """
 
@@ -11,20 +11,20 @@ from collections.abc import Callable
 
 import typer
 
-from src.airtags import fetch_airtags
-from src.airtags import has_cached_keys
-from src.airtags import is_macos_14_plus
-from src.airtags import load_trackers
-from src.config import FLASK_PORT
-from src.errors import FindMyError
-from src.find_my import fetch_devices
-from src.tracking import SortKey
-from src.tracking import TrackedItem
-from src.tracking import items_to_json
-from src.tracking import render_items
-from src.tracking import sort_items
+from src.core.config import FLASK_PORT
+from src.core.errors import FindMyError
+from src.findmy.airtags import fetch_airtags
+from src.findmy.airtags import has_cached_keys
+from src.findmy.airtags import is_macos_14_plus
+from src.findmy.airtags import load_trackers
+from src.findmy.devices import fetch_devices
+from src.findmy.tracking import SortKey
+from src.findmy.tracking import TrackedItem
+from src.findmy.tracking import items_to_json
+from src.findmy.tracking import render_items
+from src.findmy.tracking import sort_items
 
-app = typer.Typer(help="Locate iCloud devices and AirTags.", no_args_is_help=True)
+app = typer.Typer(help="Find My: locate iCloud devices and AirTags.", no_args_is_help=True)
 
 _SortOption = typer.Option(SortKey.DISTANCE, "--sort", help="Order results by this field.")
 _JsonOption = typer.Option(False, "--json", help="Emit JSON instead of a table.")
@@ -88,19 +88,19 @@ def serve_command(
     poll: bool = typer.Option(
         True,
         "--poll/--no-poll",
-        help="Run the fetch loop in-process. Use --no-poll when `findmy poll` runs separately.",
+        help="Run the fetch loop in-process. Use --no-poll when `mycloud poll` runs separately.",
     ),
 ) -> None:
-    """Serve the read-only Find My API and dashboard.
+    """Serve the web UI (dashboard plus its API) on this host.
 
     By default this also runs the fetch loop in-process, which is what you want
     on a single machine. Deployments that run more than one web worker should
-    pass --no-poll and run `findmy poll` as its own service, so exactly one
+    pass --no-poll and run `mycloud poll` as its own service, so exactly one
     process writes to the database.
     """
-    # Imported here, not at module scope, so plain lookups (`findmy devices`)
+    # Imported here, not at module scope, so plain lookups (`mycloud devices`)
     # don't pay to import Flask and wire up telemetry.
-    from src.api import create_app
+    from src.web.app import create_app
 
     _configure_server_logging()
     create_app(start_poller=poll).run(host=host, port=port)
@@ -110,11 +110,11 @@ def serve_command(
 def poll_command() -> None:
     """Run only the background fetch loop, writing to the shared database.
 
-    The counterpart to `findmy serve --no-poll`. Needs a warm .icloud_session/,
-    so run `findmy airtags` once at the console first.
+    The counterpart to `mycloud serve --no-poll`. Needs a warm .icloud_session/,
+    so run `mycloud airtags` once at the console first.
     """
-    from src.db import init_db
-    from src.poller import run_forever
+    from src.core.db import init_db
+    from src.findmy.poller import run_forever
 
     _configure_server_logging()
     init_db()
@@ -139,7 +139,7 @@ def _configure_server_logging() -> None:
     This lives here rather than in `create_app` so that building the app -- in a
     test, say -- doesn't reconfigure logging for the whole process.
     """
-    # Without a configured handler, logger.info() calls (e.g. src.poller's
+    # Without a configured handler, logger.info() calls (e.g. src.findmy.poller's
     # once-a-minute fetch log) are silently dropped -- INFO is below the
     # logging module's default "handler of last resort" level (WARNING).
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -147,7 +147,7 @@ def _configure_server_logging() -> None:
     # anything else on the console; only its warnings/errors matter here.
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     # pyicloud logs its own "Number of devices found" line every poll cycle,
-    # duplicating src.poller's single per-cycle summary; only its
+    # duplicating src.findmy.poller's single per-cycle summary; only its
     # warnings/errors matter here.
     logging.getLogger("pyicloud").setLevel(logging.WARNING)
 
@@ -181,7 +181,7 @@ def main() -> None:
         app()
     except FindMyError as error:
         # The one place domain errors become console output and an exit code;
-        # see src/errors.py for why the fetch layer doesn't do this itself.
+        # see src/core/errors.py for why the fetch layer doesn't do this itself.
         typer.secho(str(error), fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from error
 
