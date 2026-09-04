@@ -14,7 +14,7 @@ User=mnalavadi
 Restart=always
 RestartSec=10
 
-# Backstop against the Anisette VM recycling in src/airtags.py failing, whose
+# Backstop against the Anisette VM recycling in src/findmy/airtags.py failing, whose
 # failure mode is accumulating VMs rather than a crash. Steady state is ~165 MB;
 # hitting this means that recycling needs looking at. See "Why RAM saw-tooths"
 # in README.md.

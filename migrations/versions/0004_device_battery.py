@@ -3,7 +3,7 @@
 Stores each device's last-known battery level -- "Full", "Medium", "Low",
 "Very Low", or NULL if unknown/unsupported. Only src/airtags.py populates
 this (decoded from the status byte in Apple's crowdsourced network reports);
-src/find_my.py's iCloud devices leave it NULL.
+src/findmy/devices.py's iCloud devices leave it NULL.
 
 Revision ID: 0004
 Revises: 0003

@@ -1,8 +1,8 @@
 """Shared domain model and rendering for Find My items.
 
 Apple exposes two unrelated location systems, so this project has two sources:
-src/find_my.py for devices signed into iCloud (classic Find My iPhone API) and
-src/airtags.py for AirTags and third-party trackers (crowdsourced Find My
+src/findmy/devices.py for devices signed into iCloud (classic Find My iPhone API) and
+src/findmy/airtags.py for AirTags and third-party trackers (crowdsourced Find My
 network). Both return `list[TrackedItem]` and render through `render_items`, so
 callers treat them the same way.
 """
@@ -13,18 +13,15 @@ import math
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
-from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
-from src.config import HOME_LATITUDE
-from src.config import HOME_LONGITUDE
-from src.env import ICLOUD_PASSWORD
-from src.env import ICLOUD_USERNAME
-from src.errors import MissingCredentialsError
-
-SESSION_DIR = Path(__file__).resolve().parent.parent / ".icloud_session"
+from src.core.config import HOME_LATITUDE
+from src.core.config import HOME_LONGITUDE
+from src.core.env import ICLOUD_PASSWORD
+from src.core.env import ICLOUD_USERNAME
+from src.core.errors import MissingCredentialsError
 
 _console = Console()
 _EARTH_RADIUS_M = 6_371_008.8
@@ -47,7 +44,7 @@ class TrackedItem:
     `kind` is whatever the source calls the hardware: a device class such as
     "iPhone" for Apple devices, or a model name such as "AirTag (2nd
     generation)" for trackers. `source` is which backend produced it --
-    "device" for src/find_my.py, "item" for src/airtags.py -- so the dashboard
+    "device" for src/findmy/devices.py, "item" for src/findmy/airtags.py -- so the dashboard
     can split them into tabs the way the Find My app does.
     """
 
@@ -57,8 +54,8 @@ class TrackedItem:
     source: str
     location: Location | None
     # One of "Full", "Medium", "Low", "Very Low", or None if unknown/unsupported.
-    # Only src/airtags.py populates this today -- it's decoded from the status
-    # byte Apple's crowdsourced network already reports. src/find_my.py's own
+    # Only src/findmy/airtags.py populates this today -- it's decoded from the status
+    # byte Apple's crowdsourced network already reports. src/findmy/devices.py's own
     # iCloud devices leave it None.
     battery_level: str | None = None
 
@@ -76,7 +73,7 @@ def require_credentials() -> tuple[str, str]:
 
     Raises:
         MissingCredentialsError: If either is unset. Callers decide how to
-            report it -- see src/errors.py for why this isn't a `typer.Exit`.
+            report it -- see src/core/errors.py for why this isn't a `typer.Exit`.
     """
     if not ICLOUD_USERNAME or not ICLOUD_PASSWORD:
         raise MissingCredentialsError("Set ICLOUD_USERNAME and ICLOUD_PASSWORD in .env first.")
@@ -86,7 +83,7 @@ def require_credentials() -> tuple[str, str]:
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance between two points, in meters.
 
-    The project's only haversine: src/alerts.py's movement check and the API's
+    The project's only haversine: src/findmy/alerts.py's movement check and the API's
     `distance_m` (which the dashboard displays rather than recomputing) both
     come through here.
     """
@@ -103,7 +100,7 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 def distance_from_home_m_at(latitude: float, longitude: float) -> float:
     """Great-circle distance from the configured home coordinates, in meters.
 
-    Takes raw coordinates so callers holding a DB row (src/api.py) can use it
+    Takes raw coordinates so callers holding a DB row (src/web/app.py) can use it
     without first building a `Location`.
     """
     return haversine_m(HOME_LATITUDE, HOME_LONGITUDE, latitude, longitude)

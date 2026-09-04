@@ -1,16 +1,14 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Find My dashboard</title>
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon-32.png') }}">
-  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+{% extends "base.html" %}
+
+{% block title %}Find My dashboard{% endblock %}
+
+{% block head %}
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
-</head>
-<body>
+  <link rel="stylesheet" href="{{ url_for('findmy.static', filename='findmy.css') }}">
+{% endblock %}
+
+{% block content %}
   <main class="map-shell">
     <div id="map" role="region" aria-label="Map of selected devices' locations over the chosen time range"></div>
     <p id="track-empty" class="empty-state" role="status" hidden>No location history for the selected devices in this range.</p>
@@ -25,7 +23,7 @@
     <div class="map-toolbar">
       <label class="field">
         <span class="visually-hidden">Time range</span>
-        <select id="time-range">
+        <select id="time-range" class="btn-floating">
           <option value="1">Last hour</option>
           <option value="6">Last 6 hours</option>
           <option value="24" selected>Last 24 hours</option>
@@ -40,12 +38,6 @@
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" fill="none" stroke="currentColor" stroke-width="1.8"/>
         </svg>
       </button>
-    </div>
-
-    <div class="banner-stack">
-      <p id="fatal-banner" class="error-banner" role="alert" hidden></p>
-      <p id="warning-banner" class="warning-banner" role="status" hidden></p>
-      <p id="error-banner" class="error-banner" role="alert" hidden></p>
     </div>
 
     <aside id="sidebar" class="sidebar" aria-label="Devices and items">
@@ -101,9 +93,11 @@
       </footer>
     </aside>
   </main>
+{% endblock %}
 
+{% block scripts %}
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
-</body>
-</html>
+  {#- A module: it imports the shell's shared helpers from /static. -#}
+  <script type="module" src="{{ url_for('findmy.static', filename='dashboard.js') }}"></script>
+{% endblock %}

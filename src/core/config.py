@@ -2,17 +2,18 @@
 
 Exposed both as module constants (for the app) and as a tiny CLI (`uv run
 config --project-name`), which is how install/install.sh discovers the service
-name and port without duplicating them in shell. Secrets live in src/env.py.
+name and port without duplicating them in shell. Secrets live in src/core/env.py.
 """
 
 import tomllib
-from pathlib import Path
 from typing import Any
 from typing import NoReturn
 
 import typer
 
-_CONFIG_FILE = Path(__file__).resolve().parent.parent / "pyproject.toml"
+from src.core.paths import REPO_ROOT
+
+_CONFIG_FILE = REPO_ROOT / "pyproject.toml"
 
 try:
     with _CONFIG_FILE.open("rb") as handle:

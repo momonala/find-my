@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon with context %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<main class="page">
+  <div class="page-inner">
+    <h1 class="page-title">Dashboard</h1>
+    <ul class="card-grid">
+      {% for item in nav_items %}
+      <li>
+        <a class="card-link" href="{{ url_for(item.endpoint) }}">
+          <h2 class="card-title">{{ icon(item.icon) }}{{ item.label }}</h2>
+          <p class="card-summary">{{ item.summary }}</p>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</main>
+{% endblock %}

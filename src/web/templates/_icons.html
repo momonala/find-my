@@ -1,0 +1,13 @@
+{#- One inline SVG per nav entry, so a new page adds a `<path>` here rather
+    than a second icon mechanism. Stroke-drawn at 24x24 to match the Find My
+    sidebar's own icons. -#}
+{% macro icon(name) -%}
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" width="16" height="16">
+  {%- if name == "home" %}
+  <path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1v-9.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  {%- elif name == "pin" %}
+  <path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <circle cx="12" cy="9.8" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  {%- endif %}
+</svg>
+{%- endmacro %}

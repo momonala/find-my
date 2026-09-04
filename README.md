@@ -10,14 +10,14 @@ Apple splits this across two unrelated systems, so this project has two backends
 
 | Source | Covers | Mechanism |
 |--------|--------|-----------|
-| `src/find_my.py` | iPhones, iPads, Macs, AirPods | Classic Find My iPhone API — the device reports its own location |
-| `src/airtags.py` | AirTags, Sualio/ACCUTag/Smart Card trackers | Crowdsourced Find My network — nearby Apple devices relay encrypted BLE beacons |
+| `src/findmy/devices.py` | iPhones, iPads, Macs, AirPods | Classic Find My iPhone API — the device reports its own location |
+| `src/findmy/airtags.py` | AirTags, Sualio/ACCUTag/Smart Card trackers | Crowdsourced Find My network — nearby Apple devices relay encrypted BLE beacons |
 
-On top of the CLI, `uv run findmy serve` runs a small read-only HTTP API and dashboard backed by a
-once-a-minute background poller and a SQLite history — see [Serving an HTTP API and
-dashboard](#serving-an-http-api-and-dashboard).
+On top of the CLI, `uv run findmy serve` runs a small web UI and read-only HTTP API backed by a
+once-a-minute background poller and a SQLite history. The UI is a shell with a nav bar: a landing page listing
+its pages, and Find My as the first of them — see [Serving the web UI and API](#serving-the-web-ui-and-api).
 
-Last Updated: 2026-08-27
+Last Updated: 2026-09-04
 
 ## Prerequisites
 
@@ -102,11 +102,11 @@ location always sort last.
                                                   11 items in 9.1s
 ```
 
-## Serving an HTTP API and dashboard
+## Serving the web UI and API
 
-`uv run findmy serve [--host] [--port] [--poll/--no-poll]` (default `127.0.0.1:5016`, polling on) runs a small
-HTTP API and dashboard instead of a one-shot CLI command. Reads never make a live Apple call — a background
-fetch loop (`src/poller.py`) runs `fetch_devices()` and `fetch_airtags()` once a minute and writes to a SQLite
+`uv run findmy serve [--host] [--port] [--poll/--no-poll]` (default `127.0.0.1:5016`, polling on) runs the web
+UI and its HTTP API instead of a one-shot CLI command. Reads never make a live Apple call — a background
+fetch loop (`src/findmy/poller.py`) runs `fetch_devices()` and `fetch_airtags()` once a minute and writes to a SQLite
 file at `data/findmy.db` (git-ignored), and every read route just reads that file. That's what keeps requests
 fast: the multi-second Apple round trip (see [Batched report fetching](#batched-report-fetching)) happens on
 the poller's own schedule, off the request path. The one write route, `PUT /locations/<id>/icon`, is the
@@ -116,26 +116,33 @@ Deployments running more than one web worker should pass `--no-poll` and run the
 process — `uv run findmy poll` — so exactly one process ever writes to the database; `install/` ships it as a
 separate systemd unit for that reason.
 
-`src/db.py` keeps six tables: `devices` (latest name/kind), `location_history` (one row per fix, written only
-on coordinate change so repeated identical reports don't grow the table), `device_icons` (dashboard marker
-emoji), `alerts` (movement/enter/exit definitions plus `is_active` state, evaluated by `src/alerts.py`),
-`alert_events` (one row per actual firing, kept separate so config and trigger history don't share a row), and
-`tracker_alignment` (where each tracker is in its rolling-key rotation — see [Key caching](#key-caching)).
-Schema itself is owned by [Alembic](#schema-migrations), not `db.py` directly.
+`src/findmy/db.py` queries six tables: `devices` (latest name/kind), `location_history` (one row per fix,
+written only on coordinate change so repeated identical reports don't grow the table), `device_icons`
+(dashboard marker emoji), `alerts` (movement/enter/exit definitions plus `is_active` state, evaluated by
+`src/findmy/alerts.py`), `alert_events` (one row per actual firing, kept separate so config and trigger
+history don't share a row), and `tracker_alignment` (where each tracker is in its rolling-key rotation — see
+[Key caching](#key-caching)). Opening the database and migrating it is `src/core/db.py`'s job, not that
+module's, so a future page can reuse the connection plumbing without importing Find My's queries. Schema
+itself is owned by [Alembic](#schema-migrations).
+
+Routes are namespaced: pages get a path per feature, JSON routes live under `/api/<feature>/`, and what every
+page shares stays at the top level. Adding a page can't collide with an existing one.
 
 | Route | Returns |
 |-------|---------|
-| `GET /` | Redirects to `/dashboard` |
-| `GET /dashboard` | The HTML dashboard described below |
-| `GET /config` | Home coordinates, for the dashboard to center the map |
-| `GET /status` | When the poller last completed a fetch cycle |
-| `GET /locations` | Latest known fix for every device, including its distance from home |
-| `GET /locations/<id>` | Latest known fix for one device (404 if `id` is unknown) |
-| `GET /locations/<id>/history` | That device's fixes, newest first; `?since=<ISO8601>` and `?limit=<N>` filter it |
-| `PUT /locations/<id>/icon` | Sets (`{"emoji": "🚲"}`) or clears (`{"emoji": null}`) a device's marker emoji |
-| `GET /alerts` | List configured movement/enter/exit alerts (see [Observability](#observability) for how they fire) |
-| `POST /alerts` | Create an alert: `{"device_id", "alert_type": "movement"\|"enter"\|"exit", "threshold_m", "anchor": "home"\|"current"}` |
-| `PUT /alerts/<id>` | Update an existing alert's type/threshold/anchor |
+| `GET /` | The landing page — one card per entry in `src/web/nav.py` |
+| `GET /findmy` | The Find My dashboard described below (`GET /dashboard` 301s here) |
+| `GET /api/config` | Basemap keys and styles, for any page that draws a map |
+| `GET /api/tiles/google/<map_type>/<z>/<x>/<y>` | One proxied Google basemap tile (see below) |
+| `GET /api/findmy/config` | Home coordinates to center the map on, and whether Telegram alerting is configured |
+| `GET /api/findmy/status` | When the poller last completed a fetch cycle |
+| `GET /api/findmy/locations` | Latest known fix for every device, including its distance from home |
+| `GET /api/findmy/locations/<id>` | Latest known fix for one device (404 if `id` is unknown) |
+| `GET /api/findmy/locations/<id>/history` | That device's fixes, newest first; `?since=<ISO8601>` and `?limit=<N>` filter it |
+| `PUT /api/findmy/locations/<id>/icon` | Sets (`{"emoji": "🚲"}`) or clears (`{"emoji": null}`) a device's marker emoji |
+| `GET /api/findmy/alerts` | List configured movement/enter/exit alerts (see [Observability](#observability) for how they fire) |
+| `POST /api/findmy/alerts` | Create an alert: `{"device_id", "alert_type": "movement"\|"enter"\|"exit", "threshold_m", "anchor": "home"\|"current"}` |
+| `PUT /api/findmy/alerts/<id>` | Update an existing alert's type/threshold/anchor |
 
 The write routes are open by default, which is fine for the localhost interface `serve` binds to. Set
 `API_WRITE_TOKEN` in `.env` before exposing the dashboard on a network or through a tunnel — writes then
@@ -145,19 +152,31 @@ Devices are identified by Apple's own stable ID — `device.data["id"]` for iClo
 (or a hash of its master key, for third-party tags where Apple leaves that field empty) for trackers — so an
 `id` survives a rename in the Find My app.
 
-`GET /dashboard` (`src/templates/dashboard.html` + `src/static/dashboard.{css,js}`) is a plain client-side page
-calling the JSON routes above — no build step, no framework. A device list (checkbox to show/hide, "Only" to
+`GET /findmy` (`src/web/findmy/`) is a plain client-side page calling the JSON routes above — no build step,
+no framework, just ES modules and one stylesheet on top of the shell's. A device list (checkbox to show/hide, "Only" to
 isolate one) sits next to a [Leaflet](https://leafletjs.com/)/OpenStreetMap map with a time-range filter (1h /
 6h / 24h / 7d / all) so a long-running poller's history doesn't overwhelm it. It loads Leaflet and map tiles
 from CDNs, so it needs internet access.
 
+The style picker offers free CARTO/OSM rasters by default. Two optional keys add more: `MAPTILER_API_KEY`
+(sent to the browser, tiles fetched direct) and `GOOGLE_MAPS_API_KEY` for Google's Map Tiles API. Google's
+tiles can't be fetched direct — each needs a server-minted session token and is billed per request — so
+`src/maps/google_tiles.py` caches the token and `GET /api/tiles/google/<map_type>/<z>/<x>/<y>` proxies the image,
+keeping the billable key server-side. Downloads are cached to `data/google_tiles/` (joblib) and pruned at
+30 days on boot, so the cache survives restarts and is shared across browsers; the response also carries a
+30-day `Cache-Control` so a warm browser skips the proxy hop entirely. Google's free allowance is 100k tile
+requests/month and a dashboard centred on one home area converges on a few hundred tiles, so cache hits are
+what keep it free. Which styles exist is the server's call — `GET /api/config` reports `google_map_types` and
+the page renders whatever it's given. The route is shell-level rather than Find My's, since any page with a
+map wants the same basemaps. `google_tiles_downloaded` vs `google_tiles_served` is the hit rate.
+
 ```mermaid
 flowchart LR
-    POLL["poller.py<br/>run_forever()"] -->|every 60s| FM2[find_my.py] & AT2[airtags.py]
-    FM2 & AT2 -->|TrackedItem list| REC["db.py<br/>record_fetch()"]
+    POLL["findmy/poller.py<br/>run_forever()"] -->|every 60s| FM2[findmy/devices.py] & AT2[findmy/airtags.py]
+    FM2 & AT2 -->|TrackedItem list| REC["findmy/db.py<br/>record_fetch()"]
     REC -->|only on coordinate change| DB[(data/findmy.db)]
-    API["api.py<br/>Flask routes"] -->|read + one write| DB
-    BROWSER[Dashboard] -->|fetch| API
+    API["web/findmy/api.py<br/>/api/findmy/*"] -->|read + one write| DB
+    BROWSER["Find My page"] -->|fetch| API
 ```
 
 `serve` itself never triggers the one-time 2FA/Keychain prompt (see [Running](#running)) — run `uv run findmy
@@ -168,7 +187,7 @@ full speed; re-run the same console command to refresh it.
 ### Schema migrations
 
 Schema changes go through [Alembic](https://alembic.sqlalchemy.org/) (`migrations/`), not hand-edited DDL in
-`src/db.py`. `init_db()` runs `alembic upgrade head` on every `findmy serve`/`findmy poll` boot, so a normal
+`src/core/db.py`. `init_db()` runs `alembic upgrade head` on every `findmy serve`/`findmy poll` boot, so a normal
 code deploy (`deploy.py code pull` + service restart) picks up new migrations automatically — there's no
 separate migration step to remember. Applying an already-current schema is a no-op, so this is safe to run on
 every boot, including a crash-loop restart.
@@ -181,8 +200,8 @@ this project, so `--autogenerate` has nothing to diff against. `uv run alembic u
 ## Observability
 
 This service reports its own operational metrics and logs to a [Spyglass](https://github.com/momonala/spyglass)
-server (see `src/telemetry.py`), separate from the location data it tracks about *your own* devices.
-`src/telemetry.py` is imported once per process entry point (`api.py`, `poller.py`) — each import calls
+server (see `src/core/telemetry.py`), separate from the location data it tracks about *your own* devices.
+`src/core/telemetry.py` is imported once per process entry point (`web/app.py`, `findmy/poller.py`) — each import calls
 `spyglass.initialize()` exactly once, which attaches a log-shipping handler to the root logger and creates the
 shared `metrics` collector; every module in that process gets remote log shipping for free via propagation, and
 imports `metrics` from `src.telemetry` when it needs to emit a counter or timing. Don't call `initialize()` a
@@ -200,24 +219,44 @@ Metrics emitted (stat names auto-prefixed `find-my.{function}.*`):
 
 ## Project Structure
 
+Three layers, and the dependency arrow only ever points inward: `web/` imports `findmy/` and `core/`,
+`findmy/` imports `core/`, and `core/` imports nothing of its own. A feature owns its domain code, its
+routes, and its assets; the shell owns only what every page shares.
+
 ```
 find-my/
 ├── src/
 │   ├── cli.py                    # `findmy` entry point: commands, sorting, output
-│   ├── find_my.py                # iCloud devices via pyicloud → fetch_devices()
-│   ├── airtags.py                # trackers via findmy         → fetch_airtags()
-│   ├── batch_reports.py          # batched Apple report fetching, used by airtags.py
-│   ├── tracking.py               # shared model, distance, sorting, table renderer
-│   ├── errors.py                 # domain exceptions raised by the fetch layer
-│   ├── poller.py                 # background fetch loop for `findmy serve`/`findmy poll`
-│   ├── db.py                     # SQLite queries backing the API; schema lives in migrations/
-│   ├── alerts.py                 # movement/enter/exit alert evaluation, called from poller.py
-│   ├── api.py                    # Flask app: JSON routes + /dashboard
-│   ├── templates/dashboard.html
-│   ├── static/dashboard.{css,js}
-│   ├── config.py                 # non-secret config from pyproject.toml → `config` CLI
-│   ├── env.py                    # secrets from .env
-│   └── telemetry.py              # Spyglass wiring: logging + metrics, see Observability
+│   ├── core/                     # infrastructure, no domain knowledge
+│   │   ├── paths.py              # repo root, data/, .icloud_session/ — resolved once
+│   │   ├── config.py             # non-secret config from pyproject.toml → `config` CLI
+│   │   ├── env.py                # secrets from .env
+│   │   ├── db.py                 # opening data/findmy.db and migrating it; no queries
+│   │   ├── errors.py             # domain exceptions raised by the fetch layer
+│   │   └── telemetry.py          # Spyglass wiring: logging + metrics, see Observability
+│   ├── findmy/                   # the tracking domain (`findmy` unqualified is the library)
+│   │   ├── devices.py            # iCloud devices via pyicloud → fetch_devices()
+│   │   ├── airtags.py            # trackers via findmy         → fetch_airtags()
+│   │   ├── batch_reports.py      # batched Apple report fetching, used by airtags.py
+│   │   ├── tracking.py           # shared model, distance, sorting, table renderer
+│   │   ├── db.py                 # queries over the five find-my tables
+│   │   ├── poller.py             # background fetch loop for `findmy serve`/`findmy poll`
+│   │   ├── alerts.py             # movement/enter/exit alert evaluation, called from poller.py
+│   │   └── telegram.py           # alert delivery
+│   ├── maps/google_tiles.py      # session-minting + disk-cached Google basemap tiles
+│   └── web/
+│       ├── app.py                # the app factory: shell routes + blueprint registration
+│       ├── nav.py                # the page registry the nav and landing page render
+│       ├── auth.py               # the write token every feature's write routes share
+│       ├── tiles.py              # /api/tiles/* — the basemap proxy's HTTP surface
+│       ├── templates/            # base.html, home.html, _icons.html
+│       ├── static/               # tokens.css, shell.css, and the shared JS modules
+│       └── findmy/               # one feature: page + JSON routes + its own assets
+│           ├── pages.py          # GET /findmy
+│           ├── api.py            # /api/findmy/*
+│           ├── schemas.py        # request parsing and response shaping
+│           ├── templates/findmy/dashboard.html
+│           └── static/findmy.css, dashboard.js
 ├── tests/
 ├── migrations/               # Alembic schema migrations for data/findmy.db, see Schema migrations
 ├── alembic.ini
@@ -225,14 +264,29 @@ find-my/
 └── install/, deploy.py       # systemd units and the pi-cloud deploy CLI
 ```
 
+### Adding a page
+
+Four things, and nothing else in the shell changes:
+
+1. `src/web/<feature>/` with a `pages.py` blueprint (its own `url_prefix`, `template_folder` and
+   `static_folder`) and, if it needs one, an `api.py` blueprint under `/api/<feature>`.
+2. A template that `{% extends "base.html" %}` and fills the `title`, `head`, `content` and `scripts`
+   blocks; the view passes `active_page=<slug>` so the nav marks it current.
+3. An entry in `src/web/nav.py`, plus its icon in `src/web/templates/_icons.html`.
+4. `app.register_blueprint(...)` in `src/web/app.py`.
+
+Shared chrome comes for free: the nav, the banner stack, `tokens.css`/`shell.css`, and the JS modules under
+`static/` (`banners.js`, `dialogs.js`, `format.js`, `http.js`, `motion.js`). Anything only one page uses
+belongs in that page's own folder — that boundary is the point of the split.
+
 ## Architecture
 
 Each backend exposes a fetch function returning `list[TrackedItem]`, so callers treat them interchangeably:
-`fetch_devices()` in `src/find_my.py`, `fetch_airtags()` in `src/airtags.py`. Neither knows about output — that is
-`src/cli.py`, which is why `findmy all` can concatenate both and render one table. `fetch_airtags()` delegates the
-actual network round trips to `src/batch_reports.py` — see [Batched report fetching](#batched-report-fetching).
+`fetch_devices()` in `src/findmy/devices.py`, `fetch_airtags()` in `src/findmy/airtags.py`. Neither knows about
+output — that is `src/cli.py`, which is why `findmy all` can concatenate both and render one table.
+`fetch_airtags()` delegates the actual network round trips to `src/findmy/batch_reports.py` — see [Batched report fetching](#batched-report-fetching).
 
-`src/tracking.py` owns everything shared: the `TrackedItem`/`Location` model, the haversine distance, the age
+`src/findmy/tracking.py` owns everything shared: the `TrackedItem`/`Location` model, the haversine distance, the age
 calculation, sorting, JSON serialization, the table renderer, and the credential guard. Location is all-or-nothing —
 an item either has a full fix (coordinates plus timestamp) or `location is None`, so "unavailable" can't be
 half-represented.
@@ -268,7 +322,7 @@ flowchart LR
 
 ### Key caching
 
-Tracker keys are fixed when a tracker is paired, so `src/airtags.py` caches them in
+Tracker keys are fixed when a tracker is paired, so `src/findmy/airtags.py` caches them in
 `.icloud_session/trackers.json` (mode 400) and only touches the Keychain on first run or with `--refresh-keys`.
 That file is read-only on every other path, including the poller's — `--refresh-keys` is the one thing that
 rewrites it, and it stages to a temp file and renames, so an interrupted write can't leave a half-file where the
@@ -305,7 +359,7 @@ Mac cannot regenerate on its own.
 ### Batched report fetching
 
 `findmy`'s own `fetch_location()` queries one accessory at a time and walks its rolling keys back until it finds a
-report, costing one HTTP request (and one Anisette header generation) per 290 keys. `src/batch_reports.py`
+report, costing one HTTP request (and one Anisette header generation) per 290 keys. `src/findmy/batch_reports.py`
 exploits that Apple's reports endpoint accepts a *list* of key groups per request, with the 290-key cap applying per
 group rather than per request: a cheap first-round probe of everyone's newest keys, then one batched sweep for
 whoever stayed silent. On 11 trackers this cut ~27 requests to 3 and wall clock from 14.1s to 9.1s.
@@ -329,7 +383,7 @@ Apple, so a process that keeps one VM alive grows ~69 MB/day without bound. `ani
 restarts the VM when a guest allocator passes 50%, but guest-allocator utilisation sits near 0.1% under this
 workload, so it never fires.
 
-`_get_anisette_provider` in `src/airtags.py` therefore recycles the VM every `_ANISETTE_MAX_USES` generations,
+`_get_anisette_provider` in `src/findmy/airtags.py` therefore recycles the VM every `_ANISETTE_MAX_USES` generations,
 capping the buffer at ~10 MB. Two details in that function are load-bearing: the VM is released explicitly rather
 than left to the garbage collector, and the cyclic collector is invoked by hand. Dropping either doesn't merely fail
 to help — discarded VMs accumulate and memory use ends up *worse* than leaving it alone.
@@ -340,7 +394,7 @@ accumulating VMs rather than a crash, and the ceiling turns that into a restart 
 host's RAM. Hitting it means the recycling needs looking at, not that the limit is too low.
 
 The same emulation is also why this service burns ~12% of a core continuously despite polling once a minute. Both
-costs scale directly with `POLL_INTERVAL_SECONDS` (`src/poller.py`), so raising the interval is the cheapest lever on
+costs scale directly with `POLL_INTERVAL_SECONDS` (`src/findmy/poller.py`), so raising the interval is the cheapest lever on
 either.
 
 ### Why two libraries
@@ -357,8 +411,8 @@ fork](https://github.com/timlaing/pyicloud); the original `picklepete/pyicloud` 
 ./test-and-lint.sh   # pytest, black --check, ruff check
 ```
 
-Tests cover `src/config.py`, the pure functions in `src/tracking.py` (distance, age), the chunking/attribution
-logic in `src/batch_reports.py` against stubs, `src/db.py`'s change-detection and lookups against a temp SQLite
-file, and every `src/api.py` route via Flask's test client (`create_app(start_poller=False)`, so tests never
-touch the network). The network-facing fetch paths (`fetch_devices`, `fetch_airtags`, and the poller that calls
+Tests cover `src/core/config.py`, the pure functions in `src/findmy/tracking.py` (distance, age), the
+chunking/attribution logic in `src/findmy/batch_reports.py` against stubs, `src/findmy/db.py`'s
+change-detection and lookups against a temp SQLite file, and every route — the shell's and Find My's — via
+Flask's test client (`create_app(start_poller=False)`, so tests never touch the network). The network-facing fetch paths (`fetch_devices`, `fetch_airtags`, and the poller that calls
 them) are not covered — they need a live Apple session.

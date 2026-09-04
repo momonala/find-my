@@ -13,11 +13,11 @@ from datetime import timedelta
 
 import pytest
 
-from src.config import HOME_LATITUDE
-from src.config import HOME_LONGITUDE
-from src.tracking import Location
-from src.tracking import distance_from_home_m
-from src.tracking import minutes_ago
+from src.core.config import HOME_LATITUDE
+from src.core.config import HOME_LONGITUDE
+from src.findmy.tracking import Location
+from src.findmy.tracking import distance_from_home_m
+from src.findmy.tracking import minutes_ago
 
 _NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
 

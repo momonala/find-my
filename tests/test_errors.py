@@ -1,6 +1,6 @@
 """Tests for the domain-error boundary between the fetch layer and the CLI.
 
-The point of src/errors.py is that shared fetch code raises plain exceptions
+The point of src/core/errors.py is that shared fetch code raises plain exceptions
 instead of `typer.Exit`, so the background poller isn't reaching for a terminal
 that doesn't exist. These tests pin both halves: the fetch layer raises, and
 `src.cli.main` is what turns that into console output and an exit code.
@@ -10,9 +10,9 @@ import pytest
 import typer
 
 import src.cli as cli
-import src.tracking as tracking
-from src.errors import FindMyError
-from src.errors import MissingCredentialsError
+import src.findmy.tracking as tracking
+from src.core.errors import FindMyError
+from src.core.errors import MissingCredentialsError
 
 
 def test_require_credentials_raises_a_domain_error(monkeypatch):

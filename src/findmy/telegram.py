@@ -1,4 +1,4 @@
-"""Telegram alerting: pushes triggered alerts (src/alerts.py) to a chat.
+"""Telegram alerting: pushes triggered alerts (src/findmy/alerts.py) to a chat.
 
 Optional -- TELEGRAM_API_TOKEN/TELEGRAM_CHAT_ID are blank by default, in which
 case sends are skipped (logged as a warning) and alerting stays in-app only:
@@ -11,15 +11,15 @@ import sqlite3
 
 import requests
 
-from src.env import TELEGRAM_API_TOKEN
-from src.env import TELEGRAM_CHAT_ID
-from src.telemetry import metrics
+from src.core.env import TELEGRAM_API_TOKEN
+from src.core.env import TELEGRAM_CHAT_ID
+from src.core.telemetry import metrics
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 _TRUNCATION_SUFFIX = "\n...(truncated)"
-# Prefix for a device with no custom marker set (src/db.py's device_icons
+# Prefix for a device with no custom marker set (src/findmy/db.py's device_icons
 # table), so every alert stays visually scannable in the chat.
 DEFAULT_ALERT_ICON = "📍"
 

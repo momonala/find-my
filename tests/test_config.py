@@ -1,11 +1,11 @@
-"""Tests for src/config.py.
+"""Tests for src/core/config.py.
 
 These tests verify that:
 1. Individual config keys return their values, in both the flag and bare forms
 2. --all returns every configuration value
 3. A missing or unknown key produces an error
 
-The real `src.config.app` is exercised rather than a locally-assembled Typer
+The real `src.core.config.app` is exercised rather than a locally-assembled Typer
 app, because the flag form (`--project-name`) depends on that app's
 `ignore_unknown_options` context settings -- which is exactly what
 install/install.sh relies on.
@@ -14,7 +14,7 @@ install/install.sh relies on.
 import pytest
 from typer.testing import CliRunner
 
-from src.config import app
+from src.core.config import app
 
 runner = CliRunner()
 

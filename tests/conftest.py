@@ -12,11 +12,12 @@ from datetime import timedelta
 
 import pytest
 
-import src.db as db
-import src.telegram as telegram
-from src.api import create_app
-from src.tracking import Location
-from src.tracking import TrackedItem
+import src.core.db as core_db
+import src.findmy.db as db
+import src.findmy.telegram as telegram
+from src.findmy.tracking import Location
+from src.findmy.tracking import TrackedItem
+from src.web.app import create_app
 
 # Fixed so that anything deriving an age or ordering from it is deterministic.
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
@@ -62,8 +63,8 @@ def _no_real_telegram_credentials(monkeypatch):
 def conn(tmp_path):
     """An open connection to a freshly initialised temp database."""
     db_path = tmp_path / "findmy.db"
-    db.init_db(db_path)
-    connection = db.get_connection(db_path)
+    core_db.init_db(db_path)
+    connection = core_db.get_connection(db_path)
     yield connection
     connection.close()
 
@@ -71,7 +72,7 @@ def conn(tmp_path):
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """A Flask test client backed by a temp DB, with no background poller."""
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "findmy.db")
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "findmy.db")
     app = create_app(start_poller=False)
     return app.test_client()
 
@@ -81,7 +82,7 @@ def seed(client):
     """Write items straight to the client's database, bypassing Apple."""
 
     def _seed(*items: TrackedItem) -> None:
-        with db.connection() as connection:
+        with core_db.connection() as connection:
             db.record_fetch(connection, list(items))
 
     return _seed

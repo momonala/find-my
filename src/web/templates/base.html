@@ -1,0 +1,39 @@
+{#- The shell every page extends. A page fills the blocks below; its view
+    passes `active_page` (a slug from src/web/nav.py) to mark its nav entry. -#}
+{% from "_icons.html" import icon with context %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %}</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon-32.png') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='shell.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="app-nav" aria-label="Pages">
+    <a class="nav-link" href="{{ url_for('home') }}"{% if active_page == 'home' %} aria-current="page"{% endif %}>
+      {{ icon('home') }}<span>Home</span>
+    </a>
+    {% for item in nav_items %}
+    <a class="nav-link" href="{{ url_for(item.endpoint) }}"{% if active_page == item.slug %} aria-current="page"{% endif %}>
+      {{ icon(item.icon) }}<span>{{ item.label }}</span>
+    </a>
+    {% endfor %}
+  </nav>
+
+  {#- Shell-level, not per-page: every page reports failures through
+      static/banners.js, which expects these three to exist. -#}
+  <div class="banner-stack">
+    <p id="fatal-banner" class="error-banner" role="alert" hidden></p>
+    <p id="warning-banner" class="warning-banner" role="status" hidden></p>
+    <p id="error-banner" class="error-banner" role="alert" hidden></p>
+  </div>
+
+  {% block content %}{% endblock %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

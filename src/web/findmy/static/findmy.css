@@ -1,76 +1,6 @@
-/* Permanently dark, to match the OpenStreetMap dark basemap -- this dashboard
-   is a map-first view, not a document that should follow the OS theme. */
-:root {
-  --color-bg: #17181a;
-  --color-surface: #202226;
-  --color-surface-translucent: rgba(28, 29, 33, 0.82);
-  --color-border: #34363b;
-  --color-text: #f1f1f3;
-  --color-text-muted: #9a9aa4;
-  --color-accent: #5b8def;
-  --color-danger: #ff8a80;
-  --color-danger-bg: rgba(42, 22, 22, 0.92);
-  --color-warning: #f5c451;
-  --color-warning-bg: rgba(43, 34, 12, 0.92);
-  --color-success: #4caf50;
+/* The Find My page: the map, its floating chrome, the device sidebar and the
+   alert list. Tokens and shared chrome come from ../../static/. */
 
-  --radius: 8px;
-  --radius-lg: 14px;
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
-
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-
-  --sidebar-width: 400px;
-  --toolbar-height: 34px;
-
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-
-  /* Motion. Two durations cover everything here: --duration-quick for state
-     that should feel instant (hover, a dialog dismissing) and --duration-fast
-     for motion the eye is meant to follow (the tab pill travelling, a dialog
-     opening). Leaving is quicker than arriving -- a surface on its way out
-     shouldn't make you wait for it. */
-  --duration-quick: 195ms;
-  --duration-fast: 325ms;
-  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --modal-scale: 0.96;
-  /* The mobile drawer gets its own pair: a longer travel with a sharper
-     decelerating curve than the in-place transitions above. */
-  --duration-drawer: 364ms;
-  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
-  --duration-battery-pulse: 1560ms;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  font-family: var(--font-sans);
-  color: var(--color-text);
-  background: var(--color-bg);
-  line-height: 1.45;
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
 
 .map-shell {
   position: relative;
@@ -124,17 +54,6 @@ body {
   color: var(--color-text-muted);
 }
 
-button {
-  font: inherit;
-}
-
-button:focus-visible,
-select:focus-visible,
-input:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
 /* --- Floating chrome over the map ------------------------------------- */
 
 .map-toolbar {
@@ -148,35 +67,6 @@ input:focus-visible {
 
 .map-toolbar .field {
   display: flex;
-}
-
-.map-toolbar select,
-.btn-floating {
-  font: inherit;
-  font-size: 0.85rem;
-  height: var(--toolbar-height);
-  background: var(--color-surface-translucent);
-  backdrop-filter: blur(10px);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 0 var(--space-3);
-  cursor: pointer;
-  box-shadow: var(--shadow-md);
-  transition:
-    background-color var(--duration-quick) var(--ease-smooth-out),
-    border-color var(--duration-quick) var(--ease-smooth-out),
-    color var(--duration-quick) var(--ease-smooth-out);
-}
-
-.btn-floating:hover {
-  border-color: var(--color-accent);
-}
-
-.btn-floating[aria-pressed="true"] {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #ffffff;
 }
 
 /* A status readout, not a control -- it lives in the sidebar footer rather
@@ -196,93 +86,6 @@ input:focus-visible {
   flex: 0 0 auto;
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--color-border);
-}
-
-.btn-icon {
-  padding: 0;
-  width: var(--toolbar-height);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.toggle-switch {
-  position: relative;
-  width: 40px;
-  height: 22px;
-  flex-shrink: 0;
-  background: var(--color-border);
-  border: none;
-  border-radius: 11px;
-  cursor: pointer;
-  transition: background-color var(--duration-quick) var(--ease-smooth-out);
-  padding: 0;
-}
-
-.toggle-switch::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #ffffff;
-  transition: transform var(--duration-quick) var(--ease-smooth-out);
-}
-
-.toggle-switch[aria-checked="true"] {
-  background: var(--color-accent);
-}
-
-.toggle-switch[aria-checked="true"]::after {
-  transform: translateX(18px);
-}
-
-/* Stacked below the toolbar via flow layout (not a hardcoded top offset that
-   would silently drift out of sync with the toolbar's real height). */
-.banner-stack {
-  position: absolute;
-  top: calc(var(--space-4) + var(--toolbar-height) + var(--space-2));
-  right: var(--space-4);
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  max-width: 320px;
-}
-
-.error-banner,
-.warning-banner {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius);
-  font-size: 0.85rem;
-  box-shadow: var(--shadow-md);
-  /* Enter only. `hidden` toggles display:none with no opacity change of its
-     own, so transitioning `display` here would just hold the banner visible
-     for the duration and then blink it out -- worse than an instant hide. */
-  transition:
-    opacity var(--duration-fast) var(--ease-smooth-out),
-    transform var(--duration-fast) var(--ease-smooth-out);
-}
-
-.error-banner {
-  background: var(--color-danger-bg);
-  color: var(--color-danger);
-}
-
-.warning-banner {
-  background: var(--color-warning-bg);
-  color: var(--color-warning);
-}
-
-@starting-style {
-  .error-banner:not([hidden]),
-  .warning-banner:not([hidden]) {
-    opacity: 0;
-    transform: translateY(calc(-1 * var(--space-2)));
-  }
 }
 
 .empty-state {
@@ -664,155 +467,14 @@ input:focus-visible {
   text-align: center;
 }
 
-/* --- Dialogs -------------------------------------------------------------
-   The icon editor, map style picker and alert editor are all <dialog>s built
-   by the shared helpers in dashboard.js, so they share one set of styles here.
-   Only genuinely per-dialog differences get their own rule below. */
-
-.app-dialog {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  color: var(--color-text);
-  box-shadow: var(--shadow-md);
-  padding: var(--space-4);
-  min-width: 260px;
-}
-
-.app-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.5);
-}
-
-/* Scale + fade both directions, driven purely by the [open] attribute, so
-   every close path (Esc, form submit via method="dialog", the Cancel button)
-   animates without needing a JS hook per dialog.
-
-   The base rule is the *closed* state and carries the close duration; [open]
-   is the open state and carries the (slower) open duration -- a transition is
-   read from the style being transitioned *into*, which is how one element
-   gets asymmetric in/out timing. @starting-style supplies the pre-open values
-   so the first frame after showModal() starts small instead of snapping in.
-
-   `display` and `overlay` need allow-discrete or the dialog would leave the
-   top layer on frame one and the close animation would never be seen. */
-.app-dialog {
-  opacity: 0;
-  transform: scale(var(--modal-scale));
-  transition:
-    opacity var(--duration-quick) var(--ease-smooth-out),
-    transform var(--duration-quick) var(--ease-smooth-out),
-    display var(--duration-quick) allow-discrete,
-    overlay var(--duration-quick) allow-discrete;
-}
-
-.app-dialog[open] {
-  opacity: 1;
-  transform: scale(1);
-  transition:
-    opacity var(--duration-fast) var(--ease-smooth-out),
-    transform var(--duration-fast) var(--ease-smooth-out),
-    display var(--duration-fast) allow-discrete,
-    overlay var(--duration-fast) allow-discrete;
-}
-
-.app-dialog::backdrop {
-  opacity: 0;
-  transition:
-    opacity var(--duration-quick) var(--ease-smooth-out),
-    display var(--duration-quick) allow-discrete;
-}
-
-.app-dialog[open]::backdrop {
-  opacity: 1;
-  transition:
-    opacity var(--duration-fast) var(--ease-smooth-out),
-    display var(--duration-fast) allow-discrete;
-}
-
-@starting-style {
-  .app-dialog[open] {
-    opacity: 0;
-    transform: scale(var(--modal-scale));
-  }
-
-  .app-dialog[open]::backdrop {
-    opacity: 0;
-  }
-}
-
-.dialog-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.dialog-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  font-size: 0.85rem;
-}
-
-.dialog-section-title {
-  margin: 0 0 var(--space-3);
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.dialog-section-title:not(:first-child) {
-  margin-top: var(--space-4);
-}
-
-.dialog-input,
-.dialog-select {
-  font: inherit;
-  font-size: 0.9rem;
-  background: var(--color-bg);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: var(--space-2);
-  transition: border-color var(--duration-quick) var(--ease-smooth-out);
-}
-
-.dialog-select {
-  width: 100%;
-  cursor: pointer;
-}
-
-.dialog-select:hover,
-.dialog-select:focus {
-  border-color: var(--color-accent);
-}
-
 /* Holds a single emoji, so it gets more room than a normal field. */
 .icon-dialog-input {
   font-size: 1.1rem;
   padding: var(--space-2) var(--space-3);
 }
 
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-}
-
 .alert-dialog .dialog-actions {
   margin-top: 0;
-}
-
-.dialog-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 0.9rem;
-  color: var(--color-text);
-  padding: var(--space-2) 0;
-  cursor: default;
 }
 
 .alert-threshold-wrap {
@@ -966,12 +628,14 @@ input:focus-visible {
    map usable at once. */
 
 @media (max-width: 640px) {
+  /* Offset by the shell's nav bar: it is fixed to the viewport, not to the
+     map, so without this it would sit on top of the nav links. */
   .sidebar-toggle {
     display: flex;
     align-items: center;
     justify-content: center;
     position: fixed;
-    top: var(--space-2);
+    top: calc(var(--nav-height) + var(--space-2));
     left: var(--space-2);
     z-index: 11;
     width: var(--toolbar-height);
@@ -982,6 +646,9 @@ input:focus-visible {
     display: block;
   }
 
+  /* Full-height inside the map, which already starts below the nav -- sized
+     by top/bottom rather than 100vh, which would overhang by the nav's
+     height now that the map no longer fills the viewport. */
   .sidebar {
     top: 0;
     left: 0;
@@ -989,8 +656,6 @@ input:focus-visible {
     bottom: 0;
     width: min(85vw, 340px);
     max-width: none;
-    height: 100vh;
-    max-height: 100vh;
     border-radius: 0;
     transform: translateX(-100%);
     transition: transform var(--duration-drawer) var(--ease-drawer);
@@ -1024,16 +689,6 @@ input:focus-visible {
     font-size: 0.65rem;
     padding: 0 var(--space-2);
   }
-
-  .btn-icon {
-    width: calc(var(--toolbar-height) * 0.85);
-  }
-
-  .banner-stack {
-    left: var(--space-2);
-    right: var(--space-2);
-    max-width: none;
-  }
 }
 
 /* --- Reduced motion ------------------------------------------------------
@@ -1051,14 +706,9 @@ input:focus-visible {
    dashes (timed per ring from dashboard.js). */
 
 @media (prefers-reduced-motion: reduce) {
-  :root {
-    --duration-quick: 0ms;
-    --duration-fast: 0ms;
-    --duration-drawer: 0ms;
-  }
-
   .battery-dot--very-low,
   .alert-radius {
     animation: none;
   }
 }
+

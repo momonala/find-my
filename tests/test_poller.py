@@ -1,4 +1,4 @@
-"""Tests for src/poller.py.
+"""Tests for src/findmy/poller.py.
 
 The poller is the piece that runs unattended, so the behaviour worth pinning is
 what it does when Apple fetches fail: keep the last known data, back off, and
@@ -9,8 +9,8 @@ import threading
 
 import pytest
 
-import src.poller as poller
-from src.errors import MissingCredentialsError
+import src.findmy.poller as poller
+from src.core.errors import MissingCredentialsError
 from tests.conftest import make_item
 from tests.conftest import make_location
 
@@ -32,16 +32,17 @@ def test_backoff_is_capped():
 
 
 def test_poll_once_records_fetched_items(tmp_path, monkeypatch):
-    import src.db as db
+    import src.core.db as core_db
+    import src.findmy.db as db
 
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "findmy.db")
-    db.init_db()
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "findmy.db")
+    core_db.init_db()
     monkeypatch.setattr(poller, "fetch_devices", lambda: [make_item("tag-1", make_location(52.5, 13.4))])
     monkeypatch.setattr(poller, "fetch_airtags", lambda: [])
 
     poller._poll_once()
 
-    with db.connection() as conn:
+    with core_db.connection() as conn:
         assert db.latest_location_for(conn, "tag-1")["latitude"] == 52.5
 
 

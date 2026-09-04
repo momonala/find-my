@@ -1,7 +1,7 @@
-"""SQLite persistence for the Flask API.
+"""Queries over find-my's five tables. Connections and schema live in src/core/db.py.
 
-Five tables. `devices` holds the latest metadata per device, upserted every
-poll. `location_history` holds one row per fix, written only when a fix's
+`devices` holds the latest metadata per device, upserted every poll.
+`location_history` holds one row per fix, written only when a fix's
 coordinates differ from the previously stored one -- repeated identical
 reports from Apple's network don't grow the table. `device_icons` holds an
 optional marker emoji per device, set through the API rather than fetched
@@ -10,36 +10,18 @@ from Apple, which exposes the emoji you pick in the Find My app to neither
 current `is_active` state, and `alert_events` one row per firing, kept apart
 so config and trigger history don't share a row.
 
-Schema is owned by Alembic (see migrations/) -- init_db() runs `alembic
-upgrade head` rather than issuing DDL. Everything else here talks to sqlite
-directly through get_connection/connection; Alembic never reads or writes
-application data.
+Every function here takes an open connection rather than opening its own, so
+one poll cycle or request is one connection (see src.core.db.connection).
 """
 
 import sqlite3
 from collections import Counter
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import UTC
 from datetime import datetime
-from pathlib import Path
 from typing import NamedTuple
 from typing import cast
 
-from alembic import command
-from alembic.config import Config
-
-from src.tracking import TrackedItem
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = _REPO_ROOT / "data"
-DB_PATH = DATA_DIR / "findmy.db"
-_ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
-_MIGRATIONS_DIR = _REPO_ROOT / "migrations"
-
-# A write from the API (PUT /icon) can land while the poller is mid-write. Wait
-# for the lock instead of failing the request with "database is locked".
-_BUSY_TIMEOUT_MS = 5000
+from src.findmy.tracking import TrackedItem
 
 # One row per device: its most recent location_history fix, if it has any.
 _LATEST_PER_DEVICE = """
@@ -60,52 +42,6 @@ LEFT JOIN ({_LATEST_PER_DEVICE}) lh ON lh.device_id = d.id
 """
 
 
-def get_connection(path: Path | None = None) -> sqlite3.Connection:
-    """Open a fresh connection, safe to call from any thread.
-
-    `path` defaults to the module-level `DB_PATH` read at call time (not bind
-    time), so tests can `monkeypatch.setattr(db, "DB_PATH", tmp_path)` and have
-    it take effect for callers -- like src.api and src.poller -- that don't
-    pass a path explicitly.
-    """
-    effective_path = path or DB_PATH
-    effective_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(effective_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-    return conn
-
-
-@contextmanager
-def connection(path: Path | None = None) -> Iterator[sqlite3.Connection]:
-    """A `get_connection` that always closes, for request and poll-cycle scopes."""
-    conn = get_connection(path)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-def init_db(path: Path | None = None) -> None:
-    """Bring the schema up to date, creating the database file if needed.
-
-    Runs on every `findmy serve`/poller boot (see src/api.py, src/cli.py), so
-    it has to be safe to re-run against a database that's already at head --
-    which `alembic upgrade head` already guarantees (a no-op once nothing's
-    pending). Uses its own SQLAlchemy-driven connection, entirely separate
-    from get_connection/connection's raw sqlite3 one -- Alembic never touches
-    application data, only schema.
-    """
-    effective_path = path or DB_PATH
-    effective_path.parent.mkdir(parents=True, exist_ok=True)
-
-    config = Config(str(_ALEMBIC_INI))
-    config.set_main_option("script_location", str(_MIGRATIONS_DIR))
-    config.set_main_option("sqlalchemy.url", f"sqlite:///{effective_path}")
-    command.upgrade(config, "head")
-
-
 class SourceCounts(NamedTuple):
     """How many of a source's fetched items got a new history row written."""
 
@@ -120,7 +56,7 @@ class FetchResult(NamedTuple):
     """What a poll cycle did: write counts per source, and which devices moved.
 
     `moved_device_ids` is exactly the set of devices that got a new
-    `location_history` row this cycle -- src.alerts.check_alerts uses it to
+    `location_history` row this cycle -- src.findmy.alerts.check_alerts uses it to
     only re-evaluate alerts where something could actually have changed.
     """
 
@@ -134,7 +70,7 @@ def record_fetch(conn: sqlite3.Connection, items: list[TrackedItem]) -> FetchRes
     The whole cycle is one transaction, so a failure partway through a batch
     rolls back rather than leaving some devices updated and others not.
 
-    `counts` is keyed by `item.source` ("device" or "item") -- src.poller logs
+    `counts` is keyed by `item.source` ("device" or "item") -- src.findmy.poller logs
     it so a poll cycle's console line shows write volume, not just fetch volume.
     """
     now = datetime.now(UTC).isoformat()
@@ -293,7 +229,7 @@ def create_alert(
 
     `anchor_lat`/`anchor_lon` only matter for `enter`/`exit` alerts: NULL (the
     default) means "measured from home", a value means "measured from this
-    fixed point" (see src/api.py's `anchor: 'current'`, which snapshots the
+    fixed point" (see src/web/app.py's `anchor: 'current'`, which snapshots the
     device's location at creation time rather than tracking it live).
     """
     if not device_exists(conn, device_id):
@@ -323,7 +259,7 @@ def update_alert(
     """Update an existing alert's type/threshold/anchor. Returns False if `alert_id` is unknown.
 
     `device_id` isn't editable here -- an alert's device is fixed at
-    creation (see src/api.py's `_parse_alert_update_payload`).
+    creation (see src/web/app.py's `_parse_alert_update_payload`).
     """
     with conn:
         cursor = conn.execute(
@@ -355,7 +291,7 @@ def get_alert(conn: sqlite3.Connection, alert_id: int) -> sqlite3.Row | None:
 def remove_alert(conn: sqlite3.Connection, alert_id: int) -> bool:
     """Remove an alert. Returns False if `alert_id` is unknown.
 
-    Named `remove_alert` so src/api.py's DELETE route can be `delete_alert`
+    Named `remove_alert` so src/web/app.py's DELETE route can be `delete_alert`
     without shadowing this import.
     """
     with conn:
@@ -367,7 +303,7 @@ def set_alert_active(conn: sqlite3.Connection, alert_id: int, *, is_active: bool
     """Update an alert's current enter/exit state.
 
     A no-op (not an error) if `alert_id` no longer exists -- it can be deleted
-    via the API in the moment between src.alerts reading it and writing this.
+    via the API in the moment between src.findmy.alerts reading it and writing this.
     """
     with conn:
         conn.execute("UPDATE alerts SET is_active = ? WHERE id = ?", (int(is_active), alert_id))
@@ -384,7 +320,7 @@ def log_alert_event(conn: sqlite3.Connection, alert_id: int, triggered_at: str) 
 def load_tracker_alignment(conn: sqlite3.Connection) -> dict[str, tuple[str, int]]:
     """Return `{tracker_id: (alignment_date, alignment_index)}` for every tracker.
 
-    `tracker_id` is src/airtags.py's `_stable_id`. A tracker with no row is
+    `tracker_id` is src/findmy/airtags.py's `_stable_id`. A tracker with no row is
     absent rather than zeroed; callers treat that as "no cached alignment".
     """
     rows = conn.execute("SELECT tracker_id, alignment_date, alignment_index FROM tracker_alignment")

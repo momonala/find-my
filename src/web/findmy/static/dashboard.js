@@ -1,3 +1,24 @@
+// The Find My page. A thin client: it renders from the JSON routes under
+// /api/findmy and holds no state the server doesn't already have.
+//
+// Shared chrome -- banners, dialog builders, formatters, the fetch wrapper --
+// comes from /static/*.js, which every page uses. Everything below is this
+// page alone: the map, the device sidebar and the alert list.
+
+import { clearError, showError, showFatalError, showWarning } from "/static/banners.js";
+import {
+  createActions,
+  createButton,
+  createDialog,
+  createField,
+  createSelect,
+  createSubmitButton,
+  sectionTitle,
+} from "/static/dialogs.js";
+import { formatDistance, formatRelativeTime, formatSeenAt, isFiniteCoordinate } from "/static/format.js";
+import { fetchJson } from "/static/http.js";
+import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/motion.js";
+
 (() => {
   "use strict";
 
@@ -15,6 +36,9 @@
     { bg: "#F0E442", fg: "#17181a" },
     { bg: "#999999", fg: "#17181a" },
   ];
+  // Every JSON route this page uses is namespaced under the feature, so a
+  // second page's routes can never collide with these.
+  const API = "/api/findmy";
   const HISTORY_LIMIT = 2000;
   const DEFAULT_ZOOM = 16;
   const FALLBACK_CENTER = [0, 0];
@@ -34,7 +58,7 @@
   // enter/exit, which carry `is_active`) -- this is how long its marker
   // highlight and "Triggered" status stay shown after the fact.
   const ALERT_RECENT_MS = 10 * 60 * 1000;
-  // Mirrors _MAX_ICON_LENGTH in src/api.py, which rejects anything longer.
+  // Mirrors MAX_ICON_LENGTH in src/web/findmy/schemas.py, which rejects anything longer.
   const ICON_MAX_LENGTH = 16;
   // How close two clicks on the same alert row must be to count as a double-click.
   const ALERT_DOUBLE_CLICK_MS = 400;
@@ -43,7 +67,6 @@
   // Below this width the sidebar is an off-canvas drawer rather than an
   // always-visible panel -- there isn't room for both the list and a usable map.
   const MOBILE_QUERY = window.matchMedia("(max-width: 640px)");
-  const REDUCED_MOTION_QUERY = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const state = {
     devices: [],
@@ -91,9 +114,6 @@
   const selectAllButton = document.getElementById("select-all");
   const selectNoneButton = document.getElementById("select-none");
   const trackEmptyEl = document.getElementById("track-empty");
-  const errorBannerEl = document.getElementById("error-banner");
-  const fatalBannerEl = document.getElementById("fatal-banner");
-  const warningBannerEl = document.getElementById("warning-banner");
   const deviceToolbarEl = document.getElementById("device-toolbar");
   const sidebarEl = document.querySelector(".sidebar");
   const sidebarToggleEl = document.getElementById("sidebar-toggle");
@@ -101,62 +121,6 @@
   const alertEmptyEl = document.getElementById("alert-empty");
   const alertAddOpenButton = document.getElementById("alert-add-open");
   const mapStyleOpenButton = document.getElementById("map-style-open");
-
-  // --- Error banners ---------------------------------------------------------
-  //
-  // Two banners, not one: `fatalBannerEl` holds a standing problem (map init
-  // failed) that stays up across refreshes, while `errorBannerEl` holds a
-  // per-refresh problem (some tracks failed to load) that the next successful
-  // refresh clears. One shared element can't hold both: loadTracks() clears it
-  // on entry, which would drop a standing map-init warning.
-
-  function showError(message) {
-    errorBannerEl.textContent = message;
-    errorBannerEl.hidden = false;
-  }
-
-  function clearError() {
-    errorBannerEl.hidden = true;
-  }
-
-  function showFatalError(message) {
-    fatalBannerEl.textContent = message;
-    fatalBannerEl.hidden = false;
-  }
-
-  // Standing (not per-refresh) notice, same lifecycle as the fatal banner --
-  // set once from /config and left up, since the condition (no Telegram
-  // token/chat id in .env) doesn't change without a service restart.
-  function showWarning(message) {
-    warningBannerEl.textContent = message;
-    warningBannerEl.hidden = false;
-  }
-
-  function formatRelativeTime(isoString) {
-    if (!isoString) return "no fix yet";
-    const timestamp = new Date(isoString).getTime();
-    if (Number.isNaN(timestamp)) return "no fix yet";
-
-    const seconds = (Date.now() - timestamp) / 1000;
-    if (seconds < 60) return "just now";
-    const totalMinutes = Math.round(seconds / 60);
-    if (totalMinutes < 60) return `${totalMinutes}m ago`;
-    const totalHours = Math.floor(totalMinutes / 60);
-    const remainderMinutes = totalMinutes % 60;
-    if (totalHours < 24) return `${totalHours}h ${remainderMinutes}m ago`;
-    const days = Math.floor(totalHours / 24);
-    const remainderHours = totalHours % 24;
-    return `${days}d ${remainderHours}h ago`;
-  }
-
-  function formatDistance(meters) {
-    if (meters < 1000) return `${Math.round(meters)} meters`;
-    return `${(meters / 1000).toFixed(1)} km`;
-  }
-
-  function isFiniteCoordinate(value) {
-    return typeof value === "number" && Number.isFinite(value);
-  }
 
   function paletteFor(deviceId) {
     if (!state.colorByDeviceId.has(deviceId)) {
@@ -198,16 +162,6 @@
     return L.divIcon({ className: "device-marker", html: badge, iconSize: [28, 28], iconAnchor: [14, 14] });
   }
 
-  function formatSeenAt(isoString) {
-    const date = new Date(isoString);
-    const day = date.getDate();
-    const month = date.toLocaleString(undefined, { month: "short" });
-    const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-    const yearSuffix =
-      date.getFullYear() === new Date().getFullYear() ? "" : ` '${String(date.getFullYear()).slice(-2)}`;
-    return `${day} ${month}${yearSuffix} · ${time}`;
-  }
-
   function buildTooltipNode(deviceId, seenAt) {
     // Built as a real element rather than an HTML string: Leaflet's tooltip
     // assigns string content via innerHTML, and device names are user-supplied
@@ -218,112 +172,6 @@
     return node;
   }
 
-  async function fetchJson(url, options) {
-    const response = await fetch(url, options);
-    if (!response.ok) {
-      let detail = "";
-      try {
-        detail = (await response.json())?.description ?? "";
-      } catch {
-        // Body wasn't JSON (or empty) -- fall back to the status alone.
-      }
-      throw new Error(`Request to ${url} failed with status ${response.status}${detail ? `: ${detail}` : ""}`);
-    }
-    if (response.status === 204) return null; // e.g. DELETE /alerts/<id> -- no body to parse.
-    return response.json();
-  }
-
-  // --- Dialog building ------------------------------------------------------
-  //
-  // All three dialogs (icon editor, map style, alert editor) are <dialog>
-  // elements built once and reused. They share chrome and field markup, so
-  // they share these builders and the `.app-dialog` styles that go with them.
-
-  function createDialog(variantClass) {
-    const dialog = document.createElement("dialog");
-    dialog.className = `app-dialog ${variantClass}`;
-    document.body.append(dialog);
-    return dialog;
-  }
-
-  function createField(labelText, control) {
-    const label = document.createElement("label");
-    label.className = "dialog-field";
-    const caption = document.createElement("span");
-    caption.textContent = labelText;
-    label.append(caption, control);
-    return label;
-  }
-
-  function createSelect(options) {
-    const select = document.createElement("select");
-    select.className = "dialog-select";
-    for (const [value, text] of options) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = text;
-      select.append(option);
-    }
-    return select;
-  }
-
-  function createButton(text, className, onClick) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = className;
-    button.textContent = text;
-    button.addEventListener("click", onClick);
-    return button;
-  }
-
-  function createSubmitButton(text) {
-    const button = document.createElement("button");
-    button.type = "submit";
-    button.className = "btn-floating";
-    button.textContent = text;
-    return button;
-  }
-
-  function createActions(...buttons) {
-    const actions = document.createElement("div");
-    actions.className = "dialog-actions";
-    actions.append(...buttons);
-    return actions;
-  }
-
-  function sectionTitle(text) {
-    const title = document.createElement("p");
-    title.className = "dialog-section-title";
-    title.textContent = text;
-    return title;
-  }
-
-  // --- Motion --------------------------------------------------------------
-  //
-  // Read durations back out of the stylesheet rather than repeating them here,
-  // so retuning a token in dashboard.css can't leave JS waiting the old
-  // amount of time and cutting an animation off part-way.
-
-  function motionDurationMs(token) {
-    const raw = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
-    if (raw.endsWith("ms")) return parseFloat(raw);
-    if (raw.endsWith("s")) return parseFloat(raw) * 1000;
-    return 0;
-  }
-
-  // Slides a list row out and collapses its height so the rows below close the
-  // gap. Without the collapse the row would fade in place and everything under
-  // it would snap upwards the moment the re-render dropped it -- which is the
-  // jank this is here to avoid. Resolves once the row is done animating.
-  function collapseRow(row) {
-    if (REDUCED_MOTION_QUERY.matches) return Promise.resolve();
-    row.style.height = `${row.offsetHeight}px`;
-    void row.offsetHeight; // commit the measured height, so collapsing to 0 has something to tween from
-    row.classList.add("is-removing");
-    row.style.height = "0px";
-    return new Promise((resolve) => setTimeout(resolve, motionDurationMs("--duration-quick")));
-  }
-
   // --- Header: last full poll cycle ---------------------------------------
 
   function formatLastUpdatedText(isoString) {
@@ -332,10 +180,10 @@
 
   async function loadStatus() {
     try {
-      const { last_updated: lastUpdated } = await fetchJson("/status");
+      const { last_updated: lastUpdated } = await fetchJson(`${API}/status`);
       lastUpdatedEl.textContent = formatLastUpdatedText(lastUpdated);
     } catch (error) {
-      console.error("Failed to load /status", error);
+      console.error(`Failed to load ${API}/status`, error);
       lastUpdatedEl.textContent = "—";
     }
   }
@@ -345,7 +193,13 @@
   async function initMap() {
     let center = FALLBACK_CENTER;
     try {
-      const config = await fetchJson("/config");
+      // Two routes, one for the shell's map keys and one for this page's own
+      // settings -- fetched together so the map still opens in one round trip.
+      const [shellConfig, pageConfig] = await Promise.all([
+        fetchJson("/api/config"),
+        fetchJson(`${API}/config`),
+      ]);
+      const config = { ...shellConfig, ...pageConfig };
       if (!isFiniteCoordinate(config.home_latitude) || !isFiniteCoordinate(config.home_longitude)) {
         throw new Error("Server returned non-numeric home coordinates.");
       }
@@ -357,7 +211,7 @@
       addMapTilerStyles(config.maptiler_key);
       addGoogleStyles(config.google_map_types);
     } catch (error) {
-      console.error("Failed to load /config", error);
+      console.error("Failed to load the map configuration", error);
       showFatalError("Could not load home coordinates; centering the map on (0, 0).");
     }
 
@@ -442,7 +296,8 @@
   }
 
   // Google tiles come through the server rather than a direct CDN URL, and the
-  // server owns which types exist -- /config reports them (src/google_tiles.py).
+  // server owns which types exist -- /api/config reports them
+  // (src/maps/google_tiles.py).
   function addGoogleStyles(mapTypes) {
     if (!mapTypes || !mapTypes.length) return;
     appendStyles(
@@ -450,7 +305,7 @@
       mapTypes.map(({ type, label }) => ({
         key: `google-${type}`,
         label,
-        url: `/tiles/google/${type}/{z}/{x}/{y}`,
+        url: `/api/tiles/google/${type}/{z}/{x}/{y}`,
         attribution: GOOGLE_ATTRIBUTION,
       })),
     );
@@ -658,7 +513,7 @@
         color: focusColor,
         weight: 2,
         fillOpacity: 0.06,
-        // Marching dashes (see .alert-radius in dashboard.css) -- the crawl
+        // Marching dashes (see .alert-radius in findmy.css) -- the crawl
         // reads as a live perimeter rather than a static annotation. The dash
         // pattern itself is set by tuneRadiusDashes, not here.
         className: "alert-radius",
@@ -808,7 +663,7 @@
     renderDeviceList();
   }
 
-  // Computed server-side (see _serialize_location in src/api.py) so the CLI's
+  // Computed server-side (see serialize_location in src/web/findmy/schemas.py) so the CLI's
   // --json output and this view share one distance calculation.
   function distanceMeters(device) {
     return isFiniteCoordinate(device.distance_m) ? device.distance_m : null;
@@ -992,7 +847,7 @@
 
   async function submitIcon(deviceId, emoji) {
     try {
-      await fetchJson(`/locations/${encodeURIComponent(deviceId)}/icon`, {
+      await fetchJson(`${API}/locations/${encodeURIComponent(deviceId)}/icon`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emoji }),
@@ -1238,7 +1093,7 @@
 
   async function createAlertRequest(deviceId, alertType, thresholdM, anchor = "home") {
     try {
-      const created = await fetchJson("/alerts", {
+      const created = await fetchJson(`${API}/alerts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1263,7 +1118,7 @@
 
   async function updateAlertRequest(alertId, alertType, thresholdM, anchor = "home") {
     try {
-      await fetchJson(`/alerts/${alertId}`, {
+      await fetchJson(`${API}/alerts/${alertId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ alert_type: alertType, threshold_m: thresholdM, anchor }),
@@ -1283,7 +1138,7 @@
       // renderDeviceList() replaces every row, which would otherwise cut the
       // animation off on its first frame.
       const collapsed = row ? collapseRow(row) : Promise.resolve();
-      await fetchJson(`/alerts/${alertId}`, { method: "DELETE" });
+      await fetchJson(`${API}/alerts/${alertId}`, { method: "DELETE" });
       await loadAlerts();
       await collapsed;
       renderDeviceList();
@@ -1300,7 +1155,7 @@
   // error banner as loadDevices()/loadTracks() failures, not get swallowed
   // into an empty alerts list that reads as "you have no alerts configured."
   async function loadAlerts() {
-    state.alerts = await fetchJson("/alerts");
+    state.alerts = await fetchJson(`${API}/alerts`);
   }
 
   // cmd+click (ctrl+click on non-Mac) adds/removes a device from the current
@@ -1472,7 +1327,7 @@
   // --- Mobile sidebar drawer ----------------------------------------------
   //
   // Below MOBILE_QUERY the sidebar is an off-canvas drawer (translated out of
-  // view, see dashboard.css) opened via the hamburger button, rather than the
+  // view, see findmy.css) opened via the hamburger button, rather than the
   // always-visible panel desktop gets -- there isn't room for both the list
   // and a usable map at once.
   function setSidebarOpen(open) {
@@ -1515,7 +1370,7 @@
   // --- Data loading ---------------------------------------------------------
 
   async function loadDevices() {
-    const devices = await fetchJson("/locations");
+    const devices = await fetchJson(`${API}/locations`);
     const currentIds = new Set(devices.map((device) => device.id));
 
     devices.forEach((device) => colorForDevice(device.id));
@@ -1557,7 +1412,7 @@
     const limit = showHistory ? HISTORY_LIMIT : 1;
     const params = new URLSearchParams({ limit: String(limit) });
     if (since && showHistory) params.set("since", since);
-    const points = await fetchJson(`/locations/${encodeURIComponent(deviceId)}/history?${params}`, { signal });
+    const points = await fetchJson(`${API}/locations/${encodeURIComponent(deviceId)}/history?${params}`, { signal });
     if (points.length === HISTORY_LIMIT) {
       console.warn(`${deviceId}: history capped at ${HISTORY_LIMIT} points; older fixes were not fetched.`);
     }

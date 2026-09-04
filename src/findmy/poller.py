@@ -1,7 +1,7 @@
 """Background fetch loop for the Flask API.
 
 Runs `fetch_devices()` and `fetch_airtags()` once a minute on a daemon thread
-and records the results via `src.db.record_fetch`, so HTTP requests never wait
+and records the results via `src.findmy.db.record_fetch`, so HTTP requests never wait
 on a live Apple round trip -- they just read whatever's already in SQLite.
 
 This reuses whatever session and tracker keys are already cached in
@@ -13,13 +13,13 @@ Keychain prompt can't be satisfied from a background thread.
 import logging
 import threading
 
-from src.airtags import fetch_airtags
-from src.alerts import check_alerts
-from src.db import NO_COUNTS
-from src.db import connection
-from src.db import record_fetch
-from src.find_my import fetch_devices
-from src.telemetry import metrics
+from src.core.db import connection
+from src.core.telemetry import metrics
+from src.findmy.airtags import fetch_airtags
+from src.findmy.alerts import check_alerts
+from src.findmy.db import NO_COUNTS
+from src.findmy.db import record_fetch
+from src.findmy.devices import fetch_devices
 
 logger = logging.getLogger(__name__)
 
