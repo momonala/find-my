@@ -27,6 +27,7 @@ from icloud_photo_metadata.models import PhotoMetadata
 from icloud_photo_metadata.models import StoredResource
 
 LIBRARY_NAME = "library.db"
+DUMP_NAME = LIBRARY_NAME + ".dump"
 SCHEMA_VERSION = 1
 
 # A Live Photo has both. The still leads, because it is the asset.
@@ -344,6 +345,24 @@ def load_assets(conn: sqlite3.Connection, *, in_icloud_only: bool = False) -> li
     where = "WHERE in_icloud = 1" if in_icloud_only else ""
     rows = conn.execute(f"SELECT * FROM assets {where} ORDER BY asset_date DESC, id DESC")
     return [_to_photo(row, resources.get(row["id"], {})) for row in rows]
+
+
+def write_dump(conn: sqlite3.Connection, directory: Path) -> int:
+    """Write the SQL that recreates this library, and return its size in bytes.
+
+    The copy that needs no SQLite to read, for a record nothing else can
+    rebuild once iCloud has let an asset go. Temp-then-rename, so a crash
+    cannot leave a half-written dump looking whole.
+    """
+    path = directory / DUMP_NAME
+    temp = path.with_name(path.name + ".tmp")
+    try:
+        with temp.open("w") as out:
+            out.writelines(f"{line}\n" for line in conn.iterdump())
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+    return path.stat().st_size
 
 
 def known_ids(conn: sqlite3.Connection) -> set[str]:

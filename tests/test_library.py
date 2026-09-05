@@ -209,6 +209,39 @@ def test_a_library_from_another_schema_refuses_to_open(tmp_path: Path) -> None:
         library.connect(tmp_path)
 
 
+def test_the_dump_restores_a_library_that_can_be_read_back(tmp_path: Path) -> None:
+    """A dump that cannot rebuild the library is not a backup of anything."""
+    photo = fully_populated()
+    with library.library(tmp_path) as conn:
+        library.replace_assets(conn, [photo])
+        library.record_files(
+            conn,
+            "asset-1",
+            [BackedUpFile(library.ORIGINAL, "2024/IMG_1.HEIC", 1000, "a-hash")],
+            recorded_as="downloaded",
+        )
+        library.write_dump(conn, tmp_path)
+
+    restored = tmp_path / "restored"
+    restored.mkdir()
+    sql = (tmp_path / library.DUMP_NAME).read_text()
+    sqlite3.connect(restored / library.LIBRARY_NAME).executescript(sql)
+
+    with library.library(restored) as conn:
+        assert library.load_assets(conn) == [photo]
+        assert library.backed_up(conn)["asset-1"].files[0].sha256 == "a-hash"
+
+
+def test_the_dump_replaces_the_previous_one_and_leaves_no_temp_file(tmp_path: Path) -> None:
+    with library.library(tmp_path) as conn:
+        library.write_dump(conn, tmp_path)
+        library.replace_assets(conn, [make_photo("id-1", "IMG_1.HEIC")])
+        library.write_dump(conn, tmp_path)
+
+    assert "id-1" in (tmp_path / library.DUMP_NAME).read_text()
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_filters_the_ui_needs_read_straight_off_the_schema(tmp_path: Path) -> None:
     """Camera and aperture live inside the EXIF blob; generated columns expose them."""
     with library.library(tmp_path) as conn:

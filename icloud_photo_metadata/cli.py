@@ -201,6 +201,9 @@ def verify_command() -> None:
     every time, because a size check cannot catch a file that rots without
     resizing.
 
+    A clean run refreshes `library.db.dump`; a failed one must not, or it would
+    overwrite the copy taken while the library was whole.
+
     Exits non-zero only on damage to the backup itself: an asset not backed up
     yet is `download`'s business.
     """
@@ -226,6 +229,8 @@ def verify_command() -> None:
                 console.print(f"  {problem}")
         else:
             console.print(f"[green]All {files:,} present and verified byte-for-byte.[/green]")
+            written = library.write_dump(conn, DEFAULT_DIR)
+            console.print(f"Wrote {library.DUMP_NAME} ({format_bytes(written)}).")
 
         _print_icloud_comparison(conn, library.load_assets(conn, in_icloud_only=True))
         if damage:

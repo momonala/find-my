@@ -569,6 +569,51 @@ def test_verify_fails_only_on_damage_to_what_the_library_claims(
     assert "not backed up yet" in result.output
 
 
+def test_a_clean_verify_refreshes_the_plain_text_copy_of_the_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    photo = tmp_path / "2024" / "IMG_1.HEIC"
+    photo.parent.mkdir()
+    photo.write_bytes(b"the original bytes")
+    seed(tmp_path, make_photo("id-1", "IMG_1.HEIC"))
+    record(tmp_path, "id-1", photo)
+    monkeypatch.setattr(cli, "DEFAULT_DIR", tmp_path)
+
+    result = CliRunner().invoke(app, ["verify"])
+
+    assert result.exit_code == 0
+    assert "id-1" in (tmp_path / library.DUMP_NAME).read_text()
+
+
+def test_a_failed_verify_leaves_the_last_good_dump_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy taken while it was whole is the one worth keeping."""
+    photo = tmp_path / "2024" / "IMG_1.HEIC"
+    photo.parent.mkdir()
+    photo.write_bytes(b"the original bytes")
+    seed(tmp_path, make_photo("id-1", "IMG_1.HEIC"))
+    record(tmp_path, "id-1", photo)
+    monkeypatch.setattr(cli, "DEFAULT_DIR", tmp_path)
+    CliRunner().invoke(app, ["verify"])
+    good = (tmp_path / library.DUMP_NAME).read_text()
+
+    photo.write_bytes(b"different bytes!!!")
+    result = CliRunner().invoke(app, ["verify"])
+
+    assert result.exit_code == 1
+    assert (tmp_path / library.DUMP_NAME).read_text() == good
+
+
+def test_the_dump_is_not_mistaken_for_media_on_the_drive(tmp_path: Path) -> None:
+    """It sits beside the media, so a scan that counted it would call it stray."""
+    (tmp_path / library.DUMP_NAME).write_text("-- sql")
+
+    index, _ = _plan_for([], tmp_path)
+
+    assert index.stray == []
+
+
 def test_verify_checks_both_halves_of_a_live_photo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Losing the motion clip is real data loss and must not verify green."""
     still = tmp_path / "2024" / "IMG_1.HEIC"

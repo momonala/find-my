@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from icloud_photo_metadata.library import DUMP_NAME
 from icloud_photo_metadata.library import LIBRARY_NAME
 
 _HASH_CHUNK_BYTES = 1 << 20
@@ -17,7 +18,7 @@ _HASH_CHUNK_BYTES = 1 << 20
 # Everything on the drive that is not media: macOS resource-fork stubs, Finder
 # droppings, the library and its journal, a partial download, an edit sidecar.
 _IGNORED_PREFIXES = ("._",)
-_IGNORED_NAMES = frozenset({".DS_Store", LIBRARY_NAME, LIBRARY_NAME + "-journal"})
+_IGNORED_NAMES = frozenset({".DS_Store", LIBRARY_NAME, LIBRARY_NAME + "-journal", DUMP_NAME})
 _IGNORED_SUFFIXES = frozenset({".aae", ".part"})
 
 
