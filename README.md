@@ -17,6 +17,10 @@ On top of the CLI, `uv run mycloud serve` runs a small web UI and read-only HTTP
 once-a-minute background poller and a SQLite history. The UI is a shell with a nav bar: a landing page listing
 its pages, and Find My as the first of them — see [Serving the web UI and API](#serving-the-web-ui-and-api).
 
+The repo also carries an unrelated local tool, `icloud_photo_metadata/`, which backs up the iCloud media
+library to an external drive so the originals can be deleted from iCloud to reclaim quota. It shares only this
+project's Apple credentials and session — see [icloud_photo_metadata/README.md](icloud_photo_metadata/README.md).
+
 Last Updated: 2026-09-04
 
 ## Prerequisites
@@ -257,6 +261,7 @@ my-cloud/
 │           ├── schemas.py        # request parsing and response shaping
 │           ├── templates/findmy/dashboard.html
 │           └── static/findmy.css, dashboard.js
+├── icloud_photo_metadata/    # iCloud media backup to an external drive; own README, `photos` dep group
 ├── tests/
 ├── migrations/               # Alembic schema migrations for data/findmy.db, see Schema migrations
 ├── alembic.ini
