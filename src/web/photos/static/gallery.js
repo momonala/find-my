@@ -364,12 +364,6 @@ for (const button of form.querySelectorAll("[data-flag]")) {
   });
 }
 
-document.getElementById("clear-filters").addEventListener("click", () => {
-  form.reset();
-  for (const button of form.querySelectorAll("[data-flag]")) button.setAttribute("aria-pressed", "false");
-  loadPage();
-});
-
 // Density is a view setting, not a filter: the select carries no `name`, so it
 // never reaches the query string and never re-queries the library.
 function applyDensity() {
@@ -381,7 +375,8 @@ perRow.addEventListener("change", applyDensity);
 toggleFilters.addEventListener("click", () => {
   const shown = toggleFilters.getAttribute("aria-expanded") === "true";
   toggleFilters.setAttribute("aria-expanded", String(!shown));
-  toggleFilters.textContent = shown ? "Show filters" : "Hide filters";
+  toggleFilters.setAttribute("aria-label", shown ? "Show filters" : "Hide filters");
+  toggleFilters.title = shown ? "Show filters" : "Hide filters";
   form.hidden = shown;
 });
 loadMore.addEventListener("click", () => loadPage({ append: true }));

@@ -1,14 +1,6 @@
 /* The gallery: a filter bar over a thumbnail grid. Every value here comes from
    tokens.css, so the page follows the shell rather than theming itself. */
 
-.photos-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-
 .photos-summary {
   margin: 0;
   color: var(--color-text-muted);
@@ -18,36 +10,53 @@
 .photos-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
-  align-items: end;
+  align-items: center;
+  gap: var(--space-2);
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--color-border);
 }
 
-.filter {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+/* Sized to their own content so the row packs tight, then capped: a camera
+   list holds names long enough to push everything else off the line. */
+.filter-control {
+  width: auto;
+  max-width: 11rem;
   font-size: 0.8125rem;
-  color: var(--color-text-muted);
+  padding: var(--space-1) var(--space-2);
 }
 
-.filter .dialog-input,
-.filter .dialog-select {
-  min-width: 7.5rem;
+.filter-search {
+  width: 8rem;
 }
 
-.filter-flags {
+.filter-flag {
+  height: auto;
+  padding: var(--space-1) var(--space-2);
+  font-size: 0.8125rem;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.grid-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  border: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
 }
 
-#result-count {
-  margin: var(--space-3) 0 var(--space-2);
+#toggle-filters {
+  box-shadow: none;
+  backdrop-filter: none;
+  flex-shrink: 0;
+}
+
+/* The disclosure state is the highlight, so the icon reads as on or off
+   without a second attribute saying the same thing. */
+#toggle-filters[aria-expanded="true"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
 }
 
 /* Everything else comes from the shell's .card-grid. The column count is the

@@ -6,89 +6,67 @@
 {% endblock %}
 
 {% block content %}
+{% from "_icons.html" import icon with context %}
 <main class="page photos-page">
-  <header class="photos-header">
-    {#- The nav bar already names the page; this keeps the document outline
-        intact without saying it twice on screen. -#}
-    <h1 class="visually-hidden">Photos</h1>
-    <p id="library-summary" class="photos-summary">Loading the library…</p>
-    <button type="button" id="toggle-filters" class="btn-floating"
-            aria-expanded="true" aria-controls="filters">Hide filters</button>
-  </header>
+  {#- The nav bar names the page; this keeps the document outline intact. -#}
+  <h1 class="visually-hidden">Photos</h1>
+  <p id="library-summary" class="photos-summary" hidden></p>
 
+  {#- No labels: each control's resting option says what it filters, and shows
+      the chosen value once there is one. -#}
   <form id="filters" class="photos-filters" aria-label="Filter the library">
-    <label class="filter">
-      <span>Search</span>
-      <input type="search" name="search" class="dialog-input" placeholder="Filename" autocomplete="off">
-    </label>
-    <label class="filter">
-      <span>Camera</span>
-      <select name="camera" class="dialog-select"><option value="">Any</option></select>
-    </label>
-    <label class="filter">
-      <span>Year</span>
-      <select name="year" class="dialog-select"><option value="">Any</option></select>
-    </label>
-    <label class="filter">
-      <span>Album</span>
-      <select name="album" class="dialog-select"><option value="">Any</option></select>
-    </label>
-    <label class="filter">
-      <span>Kind</span>
-      <select name="type" class="dialog-select"><option value="">Any</option></select>
-    </label>
-    <label class="filter">
-      <span>At least</span>
-      <select name="min_bytes" class="dialog-select">
-        <option value="">Any size</option>
-        <option value="1000000">1 MB</option>
-        <option value="5000000">5 MB</option>
-        <option value="20000000">20 MB</option>
-      </select>
-    </label>
-    <label class="filter">
-      <span>Video longer than</span>
-      <select name="min_duration" class="dialog-select">
-        <option value="">Any length</option>
-        <option value="5">5 seconds</option>
-        <option value="30">30 seconds</option>
-        <option value="60">1 minute</option>
-      </select>
-    </label>
-    <label class="filter">
-      <span>Per row</span>
-      <select id="per-row" class="dialog-select">
-        <option value="4">4</option>
-        <option value="6">6</option>
-        <option value="8" selected>8</option>
-        <option value="10">10</option>
-        <option value="12">12</option>
-        <option value="16">16</option>
-      </select>
-    </label>
-    <label class="filter">
-      <span>Sort</span>
-      <select name="sort" class="dialog-select">
-        <option value="newest">Newest first</option>
-        <option value="oldest">Oldest first</option>
-        <option value="largest">Largest first</option>
-        <option value="smallest">Smallest first</option>
-        <option value="longest">Longest video</option>
-      </select>
-    </label>
-
-    <fieldset class="filter-flags">
-      <legend class="visually-hidden">Limit to</legend>
-      <button type="button" class="btn-floating" data-flag="favorite" aria-pressed="false">Favourites</button>
-      <button type="button" class="btn-floating" data-flag="located" aria-pressed="false">Has location</button>
-      <button type="button" class="btn-floating" data-flag="in_icloud" data-value="false" aria-pressed="false">Backup only</button>
-      <button type="button" class="btn-floating" data-flag="backed_up" data-value="false" aria-pressed="false">Not backed up</button>
-      <button type="button" class="btn-floating" data-flag="mark" data-value="delete" aria-pressed="false">Marked to delete</button>
-      <button type="button" class="btn-floating" id="clear-filters">Clear</button>
-    </fieldset>
+    <input type="search" name="search" class="dialog-input filter-control filter-search"
+           placeholder="Filename" aria-label="Search filenames" autocomplete="off">
+    <select name="camera" class="dialog-select filter-control" aria-label="Camera">
+      <option value="">Camera (any)</option>
+    </select>
+    <select name="year" class="dialog-select filter-control" aria-label="Year">
+      <option value="">Year (any)</option>
+    </select>
+    <select name="album" class="dialog-select filter-control" aria-label="Album">
+      <option value="">Album (any)</option>
+    </select>
+    <select name="type" class="dialog-select filter-control" aria-label="Kind">
+      <option value="">Kind (any)</option>
+    </select>
+    <select name="min_bytes" class="dialog-select filter-control" aria-label="Minimum file size">
+      <option value="">Any size</option>
+      <option value="1000000">1 MB or more</option>
+      <option value="5000000">5 MB or more</option>
+      <option value="20000000">20 MB or more</option>
+    </select>
+    <select name="min_duration" class="dialog-select filter-control" aria-label="Minimum video length">
+      <option value="">Any length</option>
+      <option value="5">5s or longer</option>
+      <option value="30">30s or longer</option>
+      <option value="60">1m or longer</option>
+    </select>
+    <select name="sort" class="dialog-select filter-control" aria-label="Sort order">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="largest">Largest first</option>
+      <option value="smallest">Smallest first</option>
+      <option value="longest">Longest video</option>
+    </select>
+    <select id="per-row" class="dialog-select filter-control" aria-label="Images per row">
+      <option value="4">4 per row</option>
+      <option value="6">6 per row</option>
+      <option value="8" selected>8 per row</option>
+      <option value="10">10 per row</option>
+      <option value="12">12 per row</option>
+      <option value="16">16 per row</option>
+    </select>
+    <button type="button" class="btn-floating filter-flag" data-flag="favorite" aria-pressed="false">
+      Favourites
+    </button>
   </form>
 
-  <p id="result-count" class="photos-summary" role="status"></p>
+  <div class="grid-toolbar">
+    <p id="result-count" class="photos-summary" role="status"></p>
+    <button type="button" id="toggle-filters" class="btn-floating btn-icon"
+            aria-expanded="true" aria-controls="filters" aria-label="Hide filters"
+            title="Hide filters">{{ icon('sliders') }}</button>
+  </div>
 
   <ul id="grid" class="card-grid photo-grid"></ul>
 
