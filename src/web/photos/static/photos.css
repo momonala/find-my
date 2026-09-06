@@ -2,12 +2,11 @@
    tokens.css, so the page follows the shell rather than theming itself. */
 
 .photos-header {
-  margin-bottom: var(--space-5);
-}
-
-/* The shell's page title sits above body copy; here a summary line follows it. */
-.photos-header .page-title {
-  margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .photos-summary {
@@ -19,9 +18,9 @@
 .photos-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  gap: var(--space-2) var(--space-3);
   align-items: end;
-  padding-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -35,7 +34,7 @@
 
 .filter .dialog-input,
 .filter .dialog-select {
-  min-width: 9rem;
+  min-width: 7.5rem;
 }
 
 .filter-flags {
@@ -48,13 +47,14 @@
 }
 
 #result-count {
-  margin: var(--space-4) 0 var(--space-3);
+  margin: var(--space-3) 0 var(--space-2);
 }
 
-/* Everything else comes from the shell's .card-grid; thumbnails just want a
-   tighter track than nav cards do. */
+/* Everything else comes from the shell's .card-grid. The column count is the
+   reader's choice and gets set inline; this is what shows until then. */
 .photo-grid {
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: var(--space-2);
 }
 
 .photo-card {
@@ -101,9 +101,12 @@
 }
 
 .photo-caption {
-  padding: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-2);
   color: var(--color-text-muted);
   font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .photo-button:hover .photo-caption,
@@ -114,41 +117,89 @@
 .grid-footer {
   display: flex;
   justify-content: center;
-  padding: var(--space-5) 0;
+  padding: var(--space-4) 0;
 }
 
+/* Sized to the window and `overflow: hidden`, so the dialog itself never
+   scrolls: the image takes whatever height is left and only the facts column
+   scrolls, and then only when an asset carries more than fits. */
 .photo-detail {
-  max-width: min(90vw, 880px);
-  /* The image is tall and the facts list grows with what the asset carries, so
-     the panel scrolls rather than pushing its own buttons off-screen. */
-  max-height: 85vh;
-  overflow-y: auto;
+  width: min(96vw, 1440px);
+  height: min(94vh, 1000px);
+  max-width: none;
+  max-height: none;
+  overflow: hidden;
+}
+
+/* Scoped to [open]: a closed dialog relies on the browser's `display: none`,
+   and setting `display` unconditionally would leave it on the page. */
+.photo-detail[open] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 21rem;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-3) var(--space-4);
+}
+
+.detail-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.detail-header h2 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.detail-buttons {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .detail-figure {
-  margin: 0 0 var(--space-4);
+  margin: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: var(--color-bg);
+  border-radius: var(--radius);
 }
 
 .detail-figure img {
-  width: 100%;
-  max-height: 50vh;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
   border-radius: var(--radius);
-  background: var(--color-bg);
 }
 
-.detail-figure figcaption {
-  margin-top: var(--space-2);
-  font-size: 1rem;
+.detail-meta {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--space-2);
+}
+
+.detail-section + .detail-section {
+  margin-top: var(--space-4);
+}
+
+.detail-section h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 0.875rem;
   font-weight: 600;
+  color: var(--color-text);
 }
 
 .detail-facts {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-2) var(--space-4);
-  margin: 0 0 var(--space-4);
-  font-size: 0.875rem;
+  grid-template-columns: minmax(6rem, auto) 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: 0.8125rem;
 }
 
 .detail-facts dt {
@@ -157,4 +208,30 @@
 
 .detail-facts dd {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-exif summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.detail-exif pre {
+  margin: var(--space-2) 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+}
+
+/* Below this the two columns cannot both be useful, so the facts move under
+   the image and the panel scrolls as one. */
+@media (max-width: 860px) {
+  .photo-detail[open] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 2fr) minmax(0, 1fr);
+  }
 }

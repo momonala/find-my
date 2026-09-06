@@ -144,15 +144,22 @@ def test_a_grid_row_never_carries_the_exif_blob(conn: sqlite3.Connection) -> Non
     assert "camera_model" not in row
 
 
-def test_the_detail_view_adds_the_camera_but_not_the_raw_plists(conn: sqlite3.Connection) -> None:
-    photo = make_photo("id-1", "IMG_1.HEIC").model_copy(update={"exif": {"{TIFF}": {"Model": "iPhone 13"}}})
+def test_the_detail_view_carries_everything_including_the_raw_plists(conn: sqlite3.Connection) -> None:
+    """The panel shows all of an asset's metadata, so nothing may be held back.
+
+    Unlike a grid row this is one asset on demand, which is what makes the exif
+    blob affordable here and not there.
+    """
+    exif = {"{TIFF}": {"Model": "iPhone 13"}}
+    photo = make_photo("id-1", "IMG_1.HEIC").model_copy(update={"exif": exif})
     library.replace_assets(conn, [photo])
 
     asset = queries.get_asset(conn, "id-1")
 
     assert asset is not None
     assert asset["camera_model"] == "iPhone 13"
-    assert "exif" not in asset
+    assert asset["exif"] == exif, "decoded, not left as a JSON string"
+    assert {"resources", "relative_path", "mark", "in_icloud"} <= set(asset)
 
 
 def test_an_unknown_asset_has_no_detail(conn: sqlite3.Connection) -> None:

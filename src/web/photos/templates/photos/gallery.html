@@ -8,8 +8,12 @@
 {% block content %}
 <main class="page photos-page">
   <header class="photos-header">
-    <h1 class="page-title">Photos</h1>
+    {#- The nav bar already names the page; this keeps the document outline
+        intact without saying it twice on screen. -#}
+    <h1 class="visually-hidden">Photos</h1>
     <p id="library-summary" class="photos-summary">Loading the library…</p>
+    <button type="button" id="toggle-filters" class="btn-floating"
+            aria-expanded="true" aria-controls="filters">Hide filters</button>
   </header>
 
   <form id="filters" class="photos-filters" aria-label="Filter the library">
@@ -52,6 +56,17 @@
       </select>
     </label>
     <label class="filter">
+      <span>Per row</span>
+      <select id="per-row" class="dialog-select">
+        <option value="4">4</option>
+        <option value="6">6</option>
+        <option value="8" selected>8</option>
+        <option value="10">10</option>
+        <option value="12">12</option>
+        <option value="16">16</option>
+      </select>
+    </label>
+    <label class="filter">
       <span>Sort</span>
       <select name="sort" class="dialog-select">
         <option value="newest">Newest first</option>
@@ -84,15 +99,17 @@
 </main>
 
 <dialog id="detail" class="app-dialog photo-detail" aria-labelledby="detail-title">
+  <header class="detail-header">
+    <h2 id="detail-title"></h2>
+    <div class="detail-buttons">
+      <button type="button" id="detail-mark" class="btn-floating" aria-pressed="false">Mark to delete</button>
+      <button type="button" id="detail-close" class="btn-floating">Close</button>
+    </div>
+  </header>
   <figure class="detail-figure">
     <img id="detail-image" alt="">
-    <figcaption id="detail-title"></figcaption>
   </figure>
-  <dl id="detail-facts" class="detail-facts"></dl>
-  <div class="dialog-actions">
-    <button type="button" id="detail-mark" class="btn-floating" aria-pressed="false">Mark to delete</button>
-    <button type="button" id="detail-close" class="btn-floating">Close</button>
-  </div>
+  <div id="detail-meta" class="detail-meta"></div>
 </dialog>
 {% endblock %}
 

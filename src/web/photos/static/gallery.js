@@ -17,6 +17,8 @@ const grid = document.getElementById("grid");
 const resultCount = document.getElementById("result-count");
 const librarySummary = document.getElementById("library-summary");
 const loadMore = document.getElementById("load-more");
+const perRow = document.getElementById("per-row");
+const toggleFilters = document.getElementById("toggle-filters");
 const gridEmpty = document.getElementById("grid-empty");
 const detail = document.getElementById("detail");
 
@@ -106,6 +108,154 @@ async function loadPage({ append = false } = {}) {
   }
 }
 
+// The order the panel reads in. Every column the API returns appears in one of
+// these; anything added later that is not listed falls into "Other" rather than
+// disappearing, which is what makes "all the metadata" true rather than a claim.
+const FACT_GROUPS = [
+  ["Capture", ["asset_date", "original_creation_date", "added_date", "import_date",
+               "time_zone_name", "time_zone_offset_seconds"]],
+  ["Camera", ["camera_make", "camera_model", "lens_model", "f_number", "iso", "focal_length",
+              "orientation", "original_orientation"]],
+  ["Media", ["item_type", "is_live_photo", "width", "height", "duration_seconds",
+             "video_frame_rate", "hdr_type", "asset_subtype_v2", "burst_flags"]],
+  ["Storage", ["original_bytes", "icloud_bytes", "relative_path"]],
+  ["Location", ["latitude", "longitude", "altitude", "gps_speed", "gps_timestamp"]],
+  ["Library", ["source_album", "in_icloud", "icloud_gone_at", "first_seen_at", "mark",
+               "is_favorite", "is_hidden", "rating", "title", "description", "keywords", "people"]],
+  ["Usage", ["view_count", "play_count", "share_count",
+             "imported_by_display_name", "imported_by_bundle_id"]],
+  ["Identifiers", ["id", "master_id", "data_class_type", "asset_modified", "master_modified"]],
+];
+
+// Rendered separately, not as rows: two get their own section, and the
+// filename is the dialog's own heading.
+const HANDLED_ELSEWHERE = new Set(["exif", "resources", "filename"]);
+
+const LABELS = {
+  id: "Asset id",
+  master_id: "Master id",
+  iso: "ISO",
+  f_number: "Aperture",
+  focal_length: "Focal length",
+  in_icloud: "Still in iCloud",
+  icloud_gone_at: "Left iCloud",
+  first_seen_at: "First seen here",
+  relative_path: "Path on the drive",
+  original_bytes: "Original size",
+  icloud_bytes: "iCloud storage used",
+  asset_date: "Taken",
+  mark: "Marked",
+  hdr_type: "HDR type",
+  time_zone_offset_seconds: "Time zone offset",
+};
+
+const BYTE_KEYS = new Set(["original_bytes", "icloud_bytes"]);
+const BOOLEAN_KEYS = new Set(["is_live_photo", "is_favorite", "is_hidden", "in_icloud"]);
+const MOMENT_KEYS = new Set([
+  "asset_date", "added_date", "original_creation_date", "import_date", "master_modified",
+  "asset_modified", "icloud_gone_at", "first_seen_at", "gps_timestamp",
+]);
+
+function labelFor(key) {
+  if (LABELS[key]) return LABELS[key];
+  const words = key.replace(/_/g, " ");
+  return words[0].toUpperCase() + words.slice(1);
+}
+
+function formatMoment(isoString) {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return isoString;
+  return `${formatDate(isoString)}, ${date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+// Apple reports the capture zone as an offset in seconds, which reads as a
+// four-digit number unless it is put back into the form a clock shows.
+function formatOffset(seconds) {
+  const sign = seconds < 0 ? "-" : "+";
+  const minutes = Math.abs(seconds) / 60;
+  return `${sign}${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+// Returns null for anything with nothing to say, so empty fields cost no row.
+function formatValue(key, value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (Array.isArray(value)) return value.length ? value.map(String).join(", ") : null;
+  if (BYTE_KEYS.has(key)) return formatBytes(value);
+  if (BOOLEAN_KEYS.has(key)) return value ? "Yes" : "No";
+  if (MOMENT_KEYS.has(key)) return formatMoment(value);
+  if (key === "duration_seconds") return formatDuration(value);
+  if (key === "time_zone_offset_seconds") return formatOffset(value);
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function factRows(asset, keys) {
+  return keys.flatMap((key) => {
+    const value = formatValue(key, asset[key]);
+    if (value === null) return [];
+    const term = document.createElement("dt");
+    term.textContent = labelFor(key);
+    const description = document.createElement("dd");
+    description.textContent = value;
+    return [term, description];
+  });
+}
+
+function factSection(heading, rows) {
+  const section = document.createElement("section");
+  section.className = "detail-section";
+  const title = document.createElement("h3");
+  title.textContent = heading;
+  const list = document.createElement("dl");
+  list.className = "detail-facts";
+  list.append(...rows);
+  section.append(title, list);
+  return section;
+}
+
+function variantSection(resources) {
+  if (!resources?.length) return [];
+  const rows = resources.flatMap((item) => {
+    const term = document.createElement("dt");
+    term.textContent = item.kind;
+    const description = document.createElement("dd");
+    const dimensions = item.width ? `${item.width} × ${item.height}` : "";
+    description.textContent = [formatBytes(item.size_bytes), dimensions, item.content_type]
+      .filter(Boolean)
+      .join(" · ");
+    return [term, description];
+  });
+  return [factSection("Variants in iCloud", rows)];
+}
+
+function exifSection(exif) {
+  if (!exif) return [];
+  const wrapper = document.createElement("details");
+  wrapper.className = "detail-section detail-exif";
+  const summary = document.createElement("summary");
+  summary.textContent = "Raw EXIF";
+  const body = document.createElement("pre");
+  body.textContent = JSON.stringify(exif, null, 2);
+  wrapper.append(summary, body);
+  return [wrapper];
+}
+
+function renderMeta(asset) {
+  const shown = new Set(HANDLED_ELSEWHERE);
+  const sections = [];
+  for (const [heading, keys] of FACT_GROUPS) {
+    keys.forEach((key) => shown.add(key));
+    const rows = factRows(asset, keys);
+    if (rows.length) sections.push(factSection(heading, rows));
+  }
+  const leftover = Object.keys(asset).filter((key) => !shown.has(key));
+  const leftoverRows = factRows(asset, leftover);
+  if (leftoverRows.length) sections.push(factSection("Other", leftoverRows));
+
+  sections.push(...variantSection(asset.resources), ...exifSection(asset.exif));
+  document.getElementById("detail-meta").replaceChildren(...sections);
+}
+
 async function openDetail(assetId) {
   try {
     const asset = await fetchJson(`/api/photos/assets/${encodeURIComponent(assetId)}`);
@@ -114,35 +264,13 @@ async function openDetail(assetId) {
     image.hidden = !canRender(asset);
     image.alt = asset.filename;
     document.getElementById("detail-title").textContent = asset.filename;
-
-    const facts = [
-      ["Taken", formatDate(asset.asset_date)],
-      ["Camera", [asset.camera_make, asset.camera_model].filter(Boolean).join(" ") || null],
-      ["Lens", asset.lens_model],
-      ["Exposure", asset.f_number ? `ƒ/${asset.f_number} · ISO ${asset.iso ?? "?"}` : null],
-      ["Length", formatDuration(asset.duration_seconds)],
-      ["Size", formatBytes(asset.original_bytes)],
-      ["Dimensions", asset.width ? `${asset.width} × ${asset.height}` : null],
-      ["Album", asset.source_album],
-      ["In iCloud", asset.in_icloud ? "Yes" : "No — this drive is the only copy"],
-      ["On the drive", asset.relative_path ?? "Not backed up"],
-      ["Location", asset.latitude ? `${asset.latitude.toFixed(4)}, ${asset.longitude.toFixed(4)}` : null],
-    ];
-    document.getElementById("detail-facts").replaceChildren(
-      ...facts.flatMap(([label, value]) => {
-        if (!value) return [];
-        const term = document.createElement("dt");
-        term.textContent = label;
-        const description = document.createElement("dd");
-        description.textContent = value;
-        return [term, description];
-      }),
-    );
+    renderMeta(asset);
 
     const mark = document.getElementById("detail-mark");
     mark.dataset.id = asset.id;
     setMarkButton(mark, asset.mark === "delete");
     detail.showModal();
+    document.getElementById("detail-meta").scrollTop = 0;
   } catch (error) {
     showError(error.message);
   }
@@ -177,15 +305,13 @@ async function toggleMark(button) {
   }
 }
 
+// Size first, then only the counts that are actually saying something: a zero
+// here is the normal state and does not need a column of its own.
 function showTotals(totals) {
-  const parts = [
-    `${totals.assets.toLocaleString()} assets`,
-    `${formatBytes(totals.bytes)} of originals`,
-    `${(totals.assets - totals.in_icloud).toLocaleString()} no longer in iCloud`,
-  ];
-  if (totals.marked) {
-    parts.push(`${totals.marked.toLocaleString()} marked to delete (${formatBytes(totals.marked_bytes)})`);
-  }
+  const parts = [`${totals.assets.toLocaleString()} assets`, formatBytes(totals.bytes)];
+  const freed = totals.assets - totals.in_icloud;
+  if (freed) parts.push(`${freed.toLocaleString()} only on this drive`);
+  if (totals.marked) parts.push(`${totals.marked.toLocaleString()} marked to delete`);
   librarySummary.textContent = parts.join(" · ");
 }
 
@@ -213,6 +339,7 @@ async function start() {
     showFatalError(`${error.message} Is the backup drive mounted?`);
     return;
   }
+  applyDensity();
   await loadPage();
 }
 
@@ -220,6 +347,7 @@ async function start() {
 // count plus 120 image requests. Selects stay immediate: they change once.
 let typingTimer = null;
 form.addEventListener("input", (event) => {
+  if (event.target === perRow) return; // a view setting, not a filter
   if (event.target.type !== "search") {
     loadPage();
     return;
@@ -242,6 +370,20 @@ document.getElementById("clear-filters").addEventListener("click", () => {
   loadPage();
 });
 
+// Density is a view setting, not a filter: the select carries no `name`, so it
+// never reaches the query string and never re-queries the library.
+function applyDensity() {
+  grid.style.gridTemplateColumns = `repeat(${perRow.value}, minmax(0, 1fr))`;
+}
+
+perRow.addEventListener("change", applyDensity);
+
+toggleFilters.addEventListener("click", () => {
+  const shown = toggleFilters.getAttribute("aria-expanded") === "true";
+  toggleFilters.setAttribute("aria-expanded", String(!shown));
+  toggleFilters.textContent = shown ? "Show filters" : "Hide filters";
+  form.hidden = shown;
+});
 loadMore.addEventListener("click", () => loadPage({ append: true }));
 document.getElementById("detail-close").addEventListener("click", () => detail.close());
 document.getElementById("detail-mark").addEventListener("click", (event) => toggleMark(event.currentTarget));

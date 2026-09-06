@@ -9,6 +9,7 @@ person authors rather than a pull.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from dataclasses import field
@@ -160,11 +161,11 @@ def get_asset(conn: sqlite3.Connection, asset_id: str) -> dict[str, Any] | None:
     row = conn.execute(f"{_DETAIL_ROW} WHERE a.id = ?", (asset_id,)).fetchone()
     if row is None:
         return None
+    # Everything, raw plists included. This is one asset on demand, not the
+    # grid, so the exif blob the grid row avoids costs nothing here.
     asset = dict(row)
-    # The raw plists are for the tool, not the panel; its named columns carry
-    # everything the panel shows.
-    for heavy in ("exif", "people", "keywords"):
-        asset.pop(heavy, None)
+    for column in ("exif", "people", "keywords"):
+        asset[column] = json.loads(asset[column]) if asset[column] else None
     asset["resources"] = [
         dict(item)
         for item in conn.execute(
