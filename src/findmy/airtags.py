@@ -265,7 +265,7 @@ _anisette_provider: LocalAnisetteProvider | None = None
 _anisette_uses = 0
 # Header generations per provider before the VM is rebuilt. Each generation
 # leaks ~40-50 kB of emulator JIT buffer; 200 caps that at ~10 MB for the price
-# of one rebuild every few hours. See "Why RAM saw-tooths" in README.md.
+# of one rebuild every few hours. See "Why memory saw-tooths" in docs/find-my.md.
 _ANISETTE_MAX_USES = 200
 
 
@@ -280,8 +280,8 @@ def _get_anisette_provider(state: dict[str, Any]) -> LocalAnisetteProvider:
     Both teardown lines are required, and dropping either makes memory worse
     than no recycling -- `Closable.__del__` resurrects a collected provider onto
     the shared event loop, and the VM is only reachable through a reference
-    cycle the counts-based collector will not trigger on. See "Why RAM
-    saw-tooths" in README.md.
+    cycle the counts-based collector will not trigger on. See "Why memory
+    saw-tooths" in docs/find-my.md.
     """
     global _anisette_provider, _anisette_uses
     if _anisette_provider is not None and _anisette_uses >= _ANISETTE_MAX_USES:

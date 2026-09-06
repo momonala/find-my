@@ -1,292 +1,308 @@
-# icloud_photo_metadata
+# Photos
 
-Pulls iCloud Photos metadata into a database on an external drive, then backs the whole media library
-up beside it so the originals can be deleted from iCloud to reclaim quota. Photos, videos, GIFs — one
-kind of thing, one pipeline.
+Copies your iCloud photo library onto an external drive so you can delete the originals from iCloud and
+get the storage back. Part of [my-cloud](../README.md); read that first for setup and the web shell.
 
-The backup is one-way and additive. Delete an asset from iCloud and its local copy stays, keeping its
-row: `in_icloud` goes to 0 and the drive becomes its only copy. Nothing here ever removes anything.
+The backup only ever grows. Delete a photo from iCloud and the local copy stays exactly where it is, its
+row marked as no longer in iCloud, and the drive becomes the only place that photo exists. Nothing in
+here deletes anything, from iCloud or from the drive.
 
-This is a local analysis and backup tool, not part of the `findmy` service. It never runs on the
-deploy target, which is why its dependencies live in a `photos` group that plain `uv sync` skips. It
-borrows the main app's Apple credentials and session cookie jar, so a session already trusted by
-`uv run mycloud devices` needs no second 2FA prompt.
+Photos, videos, GIFs, whatever else Apple stores: all one thing here, an asset with original bytes worth
+keeping. There is no per-type branch anywhere in the code.
 
-Last Updated: 2026-09-04
+Once assets are on the drive you can browse and filter them at `/photos` in the web UI. See
+[The gallery](#the-gallery).
+
+This tool never runs on the deploy target, which is why its dependencies sit in a `photos` group that a
+plain `uv sync` skips. It borrows the main app's Apple credentials and session, so a session already
+trusted by `uv run mycloud devices` will not ask for 2FA again.
 
 ## Quick start
 
 ```bash
-uv sync --group photos                                    # tqdm, excluded by default
+uv sync --group photos
 
-# What would a download fetch? Counts, sizes, and where the drive stands
+# What would a download fetch? Counts, sizes, and how the drive compares to iCloud
 uv run --group photos python -m icloud_photo_metadata plan
 
 # Fetch it
 uv run --group photos python -m icloud_photo_metadata download
 
-# Confirm the backup is intact before deleting anything from iCloud
+# Check the backup is intact. Do this before deleting anything from iCloud
 uv run --group photos python -m icloud_photo_metadata verify
-
-# Once only, on a drive that predates the database
-uv run --group photos python -m icloud_photo_metadata import-manifest
 ```
 
-Three commands, no options. `plan` and `download` do the same work and differ only in whether they
-execute it, so the plan you read is the one that runs. Both refresh the metadata from iCloud first, so
-neither ever reports on a stale view; that refresh is incremental, reading the front of the library
-until pages stop carrying new assets, so it costs 6 pages / ~25s rather than the ~99 pages / ~5min a
-full pull takes.
+There is a fourth command, `import-manifest`, which you run once on a drive that predates the database
+and then never again.
 
-Figures below come from one run against a library of **9,711 assets / 26.6 GB of originals**
-(September 2026), of which 9,618 are eligible; a full crawl yields 9,618 Library rows against the
-9,620 iCloud reports. The drive holds 9,619 assets in 9,750 files.
+Nothing is configurable. The backup directory is `DEFAULT_DIR` in `backup.py`, metadata always refreshes
+before planning, and `verify` always hashes. A flag on any of those would only be a way of getting a
+different answer to the same question.
 
-`plan` is the only one that writes nothing at all.
+`plan` and `download` do identical work and differ only in whether they carry it out, so the plan you
+read is the plan that runs. Both refresh metadata from iCloud first, which is why neither can ever report
+against a stale view.
 
-## Commands
+Figures throughout come from one real library: **9,711 assets, 26.6 GB of originals**, of which 9,618 are
+eligible for backup. The drive holds 9,619 assets across 9,750 files, since a Live Photo is one asset with
+two.
 
-| Command | Does |
-|---------|------|
-| `plan` | Refresh metadata, then report what a download would fetch: counts, sizes, and how the drive compares to iCloud |
-| `download` | The same, then fetch whatever the drive is missing |
-| `verify` | Every recorded file present, right size, right bytes |
-| `import-manifest` | Move a pre-database `.backup-manifest.json` into the library. One time only |
-
-Nothing is configurable. The backup directory is `DEFAULT_DIR` in `backup.py`, the metadata is always
-refreshed before planning, and `verify` always hashes — a flag on any of those would only be a way to
-get a different answer to the same question. To force a full metadata pull instead of an incremental
-one, empty the `album_counts` table; the next run has no baseline to compare against and reads every
-page.
-
-`verify` exits non-zero only on damage to the backup itself. Assets not yet backed up are reported for
-information — `download` is what answers that.
-
-## How it works
-
-`download` runs three stages. Only the last one writes anything.
+## How a download works
 
 ```
-① refresh   iCloud ──► 6 pages, ~3s each ──► upsert assets, in one transaction
+① refresh   iCloud ──► 4 pages, ~3s each ──► upsert assets, in one transaction
                        anything an exhaustive crawl missed ──► in_icloud = 0, row kept
                        any page failed? nothing is written, exit 1
-                       an album moved further than the merge did? all ~99 pages instead
+                       an album moved further than the merge did? read all ~99 pages instead
 
-② index     assets where in_icloud ──► eligible  (album ∉ {Hidden, Recently Deleted})
-              every file recorded for this id present and the right size? ──► recorded
+② index     assets still in iCloud ──► eligible  (album is not Hidden or Recently Deleted)
+              every file recorded for this id present and the right size? ──► already backed up
               otherwise                                                   ──► missing
-            a file no row claims                                          ──► stray, reported
+            a file no row claims                                          ──► reported as a stray
 
-③ apply     missing ──► download, verify length, hash, stamp mtime, record
+③ apply     missing ──► download, check the length, hash it, stamp the mtime, record it
                         one commit per asset
                         10 failures in a row ──► stop, keep what landed, exit 1
 ```
 
-**`files` answers "is this backed up?" by asset id, so there is no guessing at any point.** That holds
-because the backup directory contains only files this tool downloaded, one per asset, under a name
-carrying that asset's id. The drive's own AirDrops and screen recordings live elsewhere and are not
-this tool's business.
+Answering "is this backed up?" is a lookup by asset id, with no guessing and no probing. That works only
+because the backup directory contains nothing but files this tool downloaded, one per asset, each named
+with that asset's id.
 
 ## Storage
 
-One database, on the drive beside the media it describes. 53.5 MB at 9,711 assets.
+One SQLite database, sitting on the drive next to the media it describes. 53.5 MB for 9,711 assets.
 
-| Table | Holds | Lifecycle |
-|-------|-------|-----------|
-| `assets` | One row per asset iCloud has ever shown us, `in_icloud` saying whether it still does | Durable. Once an asset is freed from iCloud this row is the only thing describing it |
-| `asset_resources` | Per-variant size, dimensions and Apple checksum — original, medium, thumb, the video halves | Derived from a pull |
-| `files` | Asset id + kind → drive-relative path, size, sha256 | Durable. What `verify` checks and what says an asset is backed up |
-| `marks` | Assets flagged for deletion from iCloud | Yours. The only rows nothing can rebuild |
-| `album_counts` | The album lengths iCloud reported at the last pull | The incremental pull's baseline. Empty it and the next pull is a full one |
-| `meta` | `pulled_at` | Derived |
+| Table | Holds |
+|-------|-------|
+| `assets` | One row per asset iCloud has ever shown us, with `in_icloud` saying whether it still does |
+| `asset_resources` | Per-variant size, dimensions and Apple checksum: original, medium, thumb, video halves |
+| `files` | Asset id and kind, mapped to a path on the drive, its size and its sha256 |
+| `marks` | Assets you have flagged for deletion from iCloud |
+| `album_counts` | What iCloud reported for each album at the last pull, the baseline for the next one |
+| `meta` | When the last pull happened |
 
-`camera_make`, `camera_model`, `lens_model`, `iso`, `f_number` and `focal_length` are generated
-columns over the `exif` JSON, so filtering on them needs no re-pull — a new one is a schema change
-alone. Indexed where it pays: the camera-model facet is 0.9 ms indexed against 88 ms without.
+`camera_make`, `camera_model`, `lens_model`, `iso`, `f_number` and `focal_length` are generated columns
+computed from the `exif` blob, so filtering on any of them needs no re-pull. Adding another is a schema
+change and nothing more. Indexing matters where it is used: the camera facet takes 0.9 ms with its index
+and 88 ms without.
 
-The media is filed by capture year:
+Media is filed by capture year:
 
 ```
 icloud-backup/
 ├── library.db
+├── library.db.dump
 ├── 2016/ … 2024/ (2,145)  2025/ (1,449)  2026/ (1,057)
-└── IMG_1972~a1b2c3d4.HEIC + IMG_1972~a1b2c3d4.MOV   ← a Live Photo, one asset, two files
+└── IMG_1972~a1b2c3d4.HEIC + IMG_1972~a1b2c3d4.MOV   ← a Live Photo: one asset, two files
 ```
 
-Credentials come from `.env` at the repo root (`ICLOUD_USERNAME`, `ICLOUD_PASSWORD`); the session
-cookie jar is `.icloud_session/`, shared with the main app.
-
-## Project structure
+## Layout
 
 ```
 icloud_photo_metadata/
-├── cli.py              # the three commands and everything that prints
-├── __main__.py         # so `python -m icloud_photo_metadata` is the one entry point
-├── backup.py           # the pipeline: index → plan → apply. Prints only download progress
-├── library.py          # the drive's database: schema, connection, every query
-├── drive.py            # list, stat, hash. Nothing else touches the filesystem
-├── icloud_source.py    # the only module that knows pyicloud and CloudKit
-├── pull_metadata.py    # refresh_incremental() and refresh_full(), called by cli.py
-├── models.py           # PhotoMetadata and friends: what an asset is, independent of storage
-└── migrate_manifest.py # one-time JSON → database import. Delete once no drive needs it
+├── cli.py                the commands, and every line this package prints
+├── backup.py             the pipeline: index, plan, apply
+├── library.py            the database on the drive: schema, connection, every query
+├── queries.py            reads for the gallery: filter, sort, page, facet
+├── drive.py              list, stat, hash. Nothing else touches the filesystem
+├── icloud_source.py      the only module that knows about pyicloud and CloudKit
+├── pull_metadata.py      refreshing the library's view of iCloud
+├── models.py             what an asset is, independent of how it is stored
+└── migrate_manifest.py   the one-time JSON import. Delete once no drive needs it
 ```
 
-Pure and testable: `eligible`, `build_index`, `build_plan`, `backup_filename` — all four take plain
-values, so the tests that cover them touch no database. All I/O is in `drive.py`, `library.py` and
-`icloud_source.py`; the only mutation of the drive's files is `apply_plan`. `cli.py` owns every
-`console.print`; `apply_plan` reports what happened on its `Outcome` and writes only the progress bar,
-so the pipeline can be tested on its return values.
+`eligible`, `build_index`, `build_plan` and `backup_filename` all take plain values and return plain
+values, so the tests covering them touch no database at all. Filesystem and network access is confined to
+`drive.py`, `library.py` and `icloud_source.py`. `cli.py` owns all the printing, which is what lets the
+pipeline be tested on its return values.
 
-## Key decisions
+## Design decisions
 
-**Photos and videos are one thing.** Both are assets with original bytes worth keeping, and an
-earlier `item_type == "movie"` filter was silently excluding the library's 8 GIFs, 2 MP4s, a WEBP
-and an AVIF from the backup. Dropping it deleted a config record, a CLI argument and every
-`if kind ==` branch that would have followed.
+### SQLite rather than JSON
 
-**The backup directory holds only what this tool put there.** This is the invariant the design rests
-on. It bought the deletion of content matching (`matching.py`), redundancy detection (`dedupe.py`) and
-every ffprobe call — roughly 500 lines whose only job was inferring what an unknown file was. A file
-here that no record claims is now an anomaly a run reports, not a category it tallies. The drive's
-ad-hoc AirDrops and screen recordings stay in their own directory, untouched.
+This used to be two JSON files, and for a tool that only ever asked "what do I still owe?" that was the
+right shape: both were read whole and written whole, with no queries and no concurrent writers.
 
-**The library is keyed by asset id, and Apple's UUID is that id.** Keying by id rather than path means
-a rename cannot break the link. A content hash would not do the job: it does not exist until after the
-file is downloaded, so it cannot key an asset that is still only metadata, and a Live Photo is one
-asset with two hashes. `sha256` is a column, which is what `verify` reads. A record is only ever
-written by the run that put the bytes on the drive, so `recorded_as` distinguishes the two ways that
-happens: `downloaded`, or `found on the drive` when a previous run was interrupted between writing a
-file and recording it.
+Wanting to browse and filter the library is exactly the workload that assumption ruled out, so the
+decision reverses on its own terms. It turned out to pay for itself elsewhere too. A grid page over 9,711
+assets takes 0.6 ms. Loading every asset is faster than parsing the old JSONL was, 0.9 s against 1.4 s.
+And the database is smaller than the two files it replaced, 53.5 MB against 63 plus 43 MB, because the
+old manifest's per-record metadata snapshot was a second copy of the cache and is now gone.
 
-**One commit per asset.** The JSON manifest carried each asset's full metadata, so every save rewrote
-all 63 MB of it; recording each of 9,617 downloads that way writes a triangular number of bytes —
-**418 GB to record 25 GB** — which is why it batched every 100 records and carried the bookkeeping to
-make batching safe. A row insert costs the same whether the library holds ten assets or ten thousand
-(69 ms per commit, measured on this exFAT drive), so the batching, the flush-on-exit and the "at most
-100 records lost on a crash" caveat all go.
+### A pull never deletes a row
 
-**Filed by capture year, under `IMG_4030~a1b2c3d4.HEIC`.** The capture date never changes and keeps
-the largest directory near two thousand files. The id fragment is unconditional because iPhone
-recycles `IMG_1234` numbering after a reset — 1,324 name collisions in this library, so the common
-case — and carrying the id makes names unique with no collision search. `verify` and `download` care
-only about the relative paths in `files`, so the layout costs them nothing.
+It clears `in_icloud` instead. Reclaiming quota is the whole point, so an asset leaving iCloud is the
+expected end of its life here rather than something to forget. Once it has gone, its row is the only
+thing that still describes it.
 
-**A pull never deletes an asset row; it clears `in_icloud`.** Freeing quota is the point of the tool,
-so an asset leaving iCloud is the expected end of its life here rather than a record to forget — and
-once it has left, its row is the only thing that still describes it. The whole pull is one
-transaction, so a partial one leaves the library exactly as it was, and a run aborts rather than plan
-against a pull that lost pages, since those could hide whole assets. Every pull still overwrites what
-it does read, which is what keeps `source_album` honest: an append-only pull skipped ids it already
-had and froze each record's album at first sight.
+The whole pull is one transaction, so a partial one leaves the library exactly as it was. A run aborts
+rather than plan against a pull that lost pages, because lost pages could be hiding entire assets.
 
-**The default pull reads the front of the library, not all of it.** Every page costs the same ~3s —
-the cost is Apple's round trip, not the payload — so page count is the only lever, and rank 0 is an
-album's newest asset. The walk reads Library pages until two in a row carry no id the cache has never
-seen, then stops: ~4 pages instead of ~99. Hidden and Recently Deleted are re-crawled end to end
-regardless, because they are one page between them and being certain of their membership is what
-keeps `source_album` honest across a move.
+### The library is keyed by Apple's asset UUID
 
-**The incremental pull checks itself against how far each album moved.** What the walk cannot see is
-a change deep in the library: an edit to an old asset, or an import whose capture date sorts it past
-the pages read. So every pull records the album lengths iCloud reported in `album_counts`, and
-the next one escalates to a full pull when an album moved by more than the merge accounts for. The
-check compares deltas rather than absolutes — `_unexplained_drift` in `pull_metadata.py` documents why
-a reported length can never be checked against a record count. Two changes that cancel out — a
-deletion and an old-dated import between two runs — still slip through; emptying `album_counts` forces
-the full pull that catches them.
+Keying by id rather than path means renaming a file cannot break the link. A content hash cannot do that
+job: it does not exist until after the file has been downloaded, so it cannot identify an asset that is
+still only metadata, and a Live Photo would have two of them for one asset. `sha256` is a column instead,
+which is what `verify` reads.
 
-**Two atomicity boundaries.** A pull is one transaction, all-or-nothing; each downloaded file is
-temp-then-rename, so no truncated file ever looks complete. The database's own rollback journal
-covers the rest, which is what retired the third boundary the two JSON stores each needed.
+### The drive holds only what this tool put there
 
-**Hashing on write is unconditional, and `verify` always checks it.** A size check cannot catch a file
-that rots without changing size.
+This is the invariant everything else rests on. It let us delete content matching, redundancy detection
+and every ffprobe call, roughly 500 lines whose only job was working out what an unknown file was. A file
+here that no row claims is now an anomaly a run reports, not a category it has to tally. Your ad-hoc
+AirDrops and screen recordings stay in their own directory, untouched.
 
-**A run of failures re-opens the session.** Ten consecutive download failures almost always mean one
-dead session rather than ten bad assets, so a download re-authenticates and resumes with whatever it
-still owes — an overnight run survives however many expiries it takes. Each asset is retried twice at
-most, so one asset failing for its own reasons cannot stall every pass, and it gives up only
-once three fresh sessions in a row have downloaded nothing. What landed stays recorded either way.
+### One commit per asset
 
-**Everything runs one request at a time.** `_SESSION_LOCK` serializes every call through pyicloud's
-session, so the metadata pull's `workers` buys nothing: 4 pages take 12.5s at 1, 4 or 8 workers alike.
-Downloads are serial for the same reason plus one of their own — Apple paces the account, not the
-connection, and a pool made every dropped connection everyone's problem.
+The old JSON manifest carried each asset's full metadata, so every save rewrote all 63 MB. Recording
+9,617 downloads that way writes a triangular number of bytes, about 418 GB to record 25 GB, which is why
+it batched every 100 records and carried extra bookkeeping to make batching safe.
 
-**A page read is retried three times.** Apple resets long-lived connections mid-crawl. Losing the
-page that way costs one more request; letting it escape used to cost the whole walk. If the crawl
-still dies, it reads as a stalled pass: re-authenticate and resume from the last page bookmark.
+A row insert costs the same whether the library holds ten assets or ten thousand, measured at 69 ms per
+commit on this exFAT drive. The batching, the flush on exit, and the "you might lose 100 records in a
+crash" caveat all disappeared with it.
 
-**Requests through pyicloud's session are serialized.** Every request rewrites the cookie jar and
-the session JSON with a truncating `open()`, so concurrent page reads could otherwise
-leave the very session file a download depends on half-written. `_SESSION_LOCK` covers that.
+### Named `IMG_4030~a1b2c3d4.HEIC`, filed by capture year
 
-**The progress bar counts pages as well as files.** The crawl walks newest-first, so a backup whose
-gap is the *oldest* assets pages past everything it already has before yielding the first file to
-fetch — 54 pages of silence, on this library. The bar's `pages=` postfix is what says the crawl
-is alive; the file count only moves when a download is recorded. A pass that re-opens the session
-resumes from the offset it stopped at rather than re-walking, and does one full sweep at the end
-before calling any asset missing from iCloud.
+The capture date never changes, and splitting by year keeps the biggest directory near two thousand
+files. The id fragment is unconditional because iPhone recycles `IMG_1234` numbering after a reset. There
+are 1,324 such collisions in this library, so it is the common case rather than an edge one, and carrying
+the id makes every name unique without searching for collisions first.
 
-**Nothing deletes.** A file at a backup's path with the wrong size is reported as damage, never
-overwritten. Files belonging to no iCloud asset are left entirely alone.
+### The pull reads the front of the library, not all of it
 
-**`icloud_source.py` quarantines pyicloud.** Reading this metadata means leaning on private methods,
-raw CKRecord fields, and the `mediaMetaDataEnc` EXIF blob pyicloud never decodes. A patch release can
-move any of it; the rest of the tool sees `PhotoMetadata` and nothing else.
+Every page costs about the same 3 s whatever it holds, because the cost is Apple's round trip rather than
+the payload. Page count is the only lever, and rank 0 is an album's newest asset, so the walk reads
+Library pages until two in a row carry nothing new and then stops. Four pages instead of ninety-nine.
 
-**SQLite, not JSON.** The two JSON stores were read-entirely, write-entirely, and for a tool that only
-ever asked "what do I still owe?" that was the right shape. Wanting to browse and filter the library —
-by capture date, camera, duration, size, location — is the query workload that assumption excluded, so
-the decision inverts on its own terms. It pays for itself elsewhere too: a grid page over 9,711 assets
-is 0.6 ms, loading every asset is faster than parsing the JSONL was (0.9 s against 1.4 s), and the
-database is smaller than the two files it replaced (53.5 MB against 63 + 43 MB) because the manifest's
-per-record metadata snapshot is no longer a second copy of the cache.
+Hidden and Recently Deleted are crawled end to end every time regardless. They are one page between them,
+and being certain of their membership is what keeps `source_album` truthful when something moves.
 
-**Rollback journalling, not WAL.** The drive is exFAT and removable, and WAL would strand `-wal` and
-`-shm` files beside the media if it were unplugged mid-write. There is exactly one writer, so WAL's
-concurrency buys nothing.
+What the walk cannot see is a change deep in the library: an edit to an old asset, or an import whose
+capture date sorts it past the pages read. So every pull records what iCloud said each album's length was,
+and the next one escalates to a full pull if an album moved further than the merge accounts for. The check
+compares deltas, never absolutes, because a reported album length counts rows its own pages never return
+(9,620 against 9,618 here) and so can never be compared to a record count.
 
-**No migration system.** `assets` and `asset_resources` are derived and could always be re-pulled in
-~80s, so a schema change is a rebuild rather than a migration. `PRAGMA user_version` refuses to open a
-library a different version wrote, which is the only guard the durable tables (`files`, `marks`) need
-until one of them actually changes shape.
+Two changes that cancel out, a deletion plus an old-dated import between runs, still slip past. Emptying
+`album_counts` forces the full pull that catches them.
+
+### Everything runs one request at a time
+
+`_SESSION_LOCK` serializes every call through pyicloud's session, because each request rewrites the cookie
+jar and the session JSON with a truncating `open()`. Concurrent reads could leave the very session file a
+download depends on half-written.
+
+That makes worker pools pointless: four pages take 12.5 s whether you use one worker, four, or eight.
+Downloads are serial for that reason plus one of their own, which is that Apple paces the account rather
+than the connection, so a pool only made every dropped connection everybody's problem.
+
+### Rollback journalling, not WAL
+
+The drive is exFAT and removable. WAL would strand `-wal` and `-shm` files beside the media if it were
+unplugged mid-write, and with exactly one writer its concurrency buys nothing.
+
+### No migration system
+
+`assets` and `asset_resources` are derived and can always be re-pulled in about 80 s, so a schema change
+there is a rebuild rather than a migration. `PRAGMA user_version` refuses to open a library written by a
+different version, which is the only guard `files` and `marks` need until one of them actually changes
+shape.
+
+### Failures re-open the session
+
+Ten download failures in a row almost always mean one dead session rather than ten bad assets, so a
+download re-authenticates and resumes with whatever it still owes. An overnight run survives however many
+expiries it takes. Each asset is retried at most twice, so one asset failing for its own reasons cannot
+stall every subsequent pass, and the run gives up only after three fresh sessions in a row have downloaded
+nothing at all. Whatever landed stays recorded either way.
+
+### Nothing overwrites
+
+A file at a backup's path with the wrong size is reported as damage, never replaced. Hashing on write is
+unconditional and `verify` always checks it, because a size check cannot catch a file that rots without
+changing length.
+
+### `verify` writes a plain-text copy
+
+A clean run also writes `library.db.dump`, the SQL that recreates the database. It is 46 MB and takes 6 s,
+which is nothing against a run that hashes 26.6 GB anyway.
+
+The database is the only record of which bytes on the drive belong to which asset, and for anything
+already freed from iCloud nothing else can rebuild it. The dump is the copy that needs no SQLite to read:
+restore with `sqlite3 new.db < library.db.dump`, or failing that, grep it.
+
+A failed verify deliberately skips the dump. Overwriting the copy taken while the library was whole with a
+snapshot of a damaged one would be worse than having no copy.
+
+### `icloud_source.py` quarantines pyicloud
+
+Reading this metadata means leaning on private methods, raw CKRecord fields, and the `mediaMetaDataEnc`
+EXIF blob that pyicloud never decodes. Any patch release could move all of it. The rest of the tool sees
+`PhotoMetadata` and nothing else.
+
+## The gallery
+
+`/photos` in the web UI is a thumbnail grid you can filter by camera, year, album, kind, size, video
+length, favourite, location, and whether an asset is still in iCloud or backed up at all. Clicking a
+thumbnail opens its EXIF. Marking one writes a row to `marks` and does nothing else, since deleting from
+iCloud is still something you do by hand in the Photos app.
+
+The page lives in `src/web/photos/` and its queries in `queries.py`. Both need the drive mounted, and the
+routes answer 503 when it is not, because an unplugged USB disk is a state to explain rather than a server
+error.
+
+**Thumbnails are built on request and cached under `data/photo-thumbs/`.** 76% of the library is HEIC,
+which only Safari renders, and an original is a 4032×3024 file on a USB disk. Each conversion takes about
+0.3 s, so the cache is what makes the grid usable rather than an optimisation on top of it. Delete it and
+the next page rebuilds it. The drive itself still holds nothing but originals.
+
+**A grid row carries no EXIF.** The camera columns are computed from the `exif` blob, and reading 34 MB of
+plists off USB to draw a grid costs a page a second. The grid reads named columns only; camera and
+exposure load one asset at a time when you open the detail panel.
+
+**Videos show a placeholder.** A movie has no still on the drive to render, and making one means decoding
+video, which is the ffmpeg dependency this tool deliberately does without.
 
 ## Limitations
 
-- **Edits are not backed up.** `original` is the pre-edit file. Crop or filter something in the Photos
-  app and the backup holds what the camera captured, not what you see.
-- **HEIC is stored as-is.** 7,300 of these are HEIC, and converting would break both the hash and the
-  "original bytes" contract. A decoder is your problem in 2040.
-- **`verify` does not refresh the metadata.** It reads whatever the last pull left, and reports its age.
-- **An edit to an old photo will not show up.** Favourite, retitle or re-tag something from 2018 and
-  the incremental pull walks nowhere near it. Empty `album_counts` to force a full pull.
-- **Hidden is never backed up**, so its 92 assets / 2.5 GB cannot safely be deleted from iCloud.
+- **Edits are not backed up.** What gets saved is the pre-edit original. Crop or filter something in the
+  Photos app and the backup holds what the camera captured, not what you see.
+- **HEIC is stored as-is.** 7,300 files. Converting would break both the hash and the "original bytes"
+  promise, so finding a decoder in 2040 is your problem.
+- **Hidden is never backed up**, so those 92 assets and 2.5 GB cannot safely be deleted from iCloud.
 - **There are no tags.** `keywords`, `people`, `title` and `description` come back empty for all 9,711
-  assets — Apple's CloudKit does not expose library tags or faces here. The XMP decode path itself
-  works, which is where the 6,184 GPS fixes come from.
-- **`marks` is written by nothing yet.** The table exists and persists; acting on it is a later job.
-- **Downloads are serial.** ~2–5 hours for the initial 25 GB, resumable at any point. Steady state is
-  a handful of new assets per run.
-- **Downloading an old asset is slow.** Albums page newest-first, so an asset just taken is found in
-  the first request, but reaching a years-old one walks most of the library.
-- **No retention policy.** The drive only grows; nothing prunes it.
+  assets. Apple's CloudKit does not expose library tags or face data here. This is not a decoding bug: the
+  same path produces 6,184 GPS fixes.
+- **`marks` is not acted on yet.** The table exists and persists what you flag. Doing something with it is
+  a later job.
+- **`verify` does not refresh metadata.** It reads whatever the last pull left and tells you how old it is.
+- **An edit to an old photo will not show up.** Favourite or retitle something from 2018 and the
+  incremental pull walks nowhere near it. Empty `album_counts` to force a full pull.
+- **The first big download is slow.** Roughly 2 to 5 hours for 25 GB, serial, resumable at any point.
+  Steady state after that is a handful of new assets per run.
+- **Reaching an old asset is slow.** Albums page newest-first, so something taken today is found in the
+  first request and something from years ago means walking most of the library.
+- **Nothing prunes.** The drive only grows.
 
-## Development
+## What is tested
 
 ```bash
 uv run --group photos pytest tests/test_backup.py tests/test_library.py tests/test_drive.py \
-    tests/test_pull_metadata.py tests/test_icloud_source.py tests/test_migrate_manifest.py
+    tests/test_pull_metadata.py tests/test_icloud_source.py tests/test_migrate_manifest.py \
+    tests/test_queries.py tests/test_photos_web.py
 ```
 
-Tests drive the whole decision layer with plain values and reserve fakes for the two real boundaries:
-iCloud and the filesystem. What is deliberately covered is the risky half — an asset surviving a round
-trip through the schema unchanged, an asset that leaves iCloud keeping its row, a short download being
-discarded, a file at the wrong size never being overwritten, both halves of a Live Photo, what stays
-recorded when a run crashes, exit codes on failure, where the incremental walk stops and what it must
-not drop when it does, the manifest import verifying itself, and the counter-intuitive CloudKit rank
-semantics in `tests/test_icloud_source.py` (rank 0 is an album's *newest* asset, and ASCENDING reads
-forward from it).
+The decision layer runs on plain values. Fakes are reserved for the two real boundaries, iCloud and the
+filesystem.
 
-`icloud_source.py`'s network paths are not covered — they need a live Apple session, and mocking
-pyicloud would only test the mock.
+What is covered on purpose is the risky half: an asset surviving a round trip through the schema
+unchanged, an asset that leaves iCloud keeping its row, a short download being discarded, a file at the
+wrong size never being overwritten, both halves of a Live Photo staying together, what stays recorded when
+a run crashes, exit codes on failure, where the incremental walk stops and what it must not drop when it
+does, the manifest import verifying itself, and the CloudKit rank semantics in `test_icloud_source.py`
+that nobody would guess (rank 0 is an album's *newest* asset, and ASCENDING reads forward from there).
+
+`icloud_source.py`'s network paths are not covered. They need a live Apple session, and mocking pyicloud
+would only test the mock.
