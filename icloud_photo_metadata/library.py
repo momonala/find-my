@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_assets_date       ON assets (asset_date DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_album_date ON assets (source_album, asset_date DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_camera     ON assets (camera_model);
+CREATE INDEX IF NOT EXISTS idx_assets_type       ON assets (item_type);
 CREATE INDEX IF NOT EXISTS idx_files_sha256      ON files (sha256);
 """
 
@@ -230,8 +231,17 @@ class BackedUpAsset:
         return [directory / item.relative_path for item in self.files]
 
 
+def exists(directory: Path) -> bool:
+    """Whether `directory` holds a library to read.
+
+    False covers both an unmounted drive and a mounted one nothing has backed
+    up to yet, which read the same to anything that only wants to query.
+    """
+    return (directory / LIBRARY_NAME).exists()
+
+
 def connect(directory: Path) -> sqlite3.Connection:
-    """Open the drive's library, creating the schema if the file is new.
+    """Open the drive's library for writing, creating the schema if the file is new.
 
     Raises:
         SchemaMismatch: If the file was written by a version this one cannot read.
@@ -240,17 +250,41 @@ def connect(directory: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA foreign_keys=ON")
+    _check_version(conn, directory)
+    conn.executescript(_SCHEMA)
+    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+    conn.commit()
+    return conn
 
+
+@contextmanager
+def reading(directory: Path) -> Iterator[sqlite3.Connection]:
+    """Open the library for queries alone, touching nothing.
+
+    `connect` stamps `user_version` on the way in, which opens a write
+    transaction, writes a journal to the drive and fsyncs twice. A page view has
+    no business doing that to removable media, and it is the difference between
+    24ms and 0.4ms per open.
+
+    Raises:
+        SchemaMismatch: If the file was written by a version this one cannot read.
+    """
+    conn = sqlite3.connect(f"file:{directory / LIBRARY_NAME}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        _check_version(conn, directory)
+        yield conn
+    finally:
+        conn.close()
+
+
+def _check_version(conn: sqlite3.Connection, directory: Path) -> None:
     found = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if found not in (0, SCHEMA_VERSION):
         conn.close()
         raise SchemaMismatch(
             f"{directory / LIBRARY_NAME} is schema v{found}, this tool speaks v{SCHEMA_VERSION}."
         )
-    conn.executescript(_SCHEMA)
-    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-    conn.commit()
-    return conn
 
 
 @contextmanager

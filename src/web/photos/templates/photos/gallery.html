@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Photos{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('photos.static', filename='photos.css') }}">
+{% endblock %}
+
+{% block content %}
+<main class="page photos-page">
+  <header class="photos-header">
+    <h1 class="page-title">Photos</h1>
+    <p id="library-summary" class="photos-summary">Loading the library…</p>
+  </header>
+
+  <form id="filters" class="photos-filters" aria-label="Filter the library">
+    <label class="filter">
+      <span>Search</span>
+      <input type="search" name="search" class="dialog-input" placeholder="Filename" autocomplete="off">
+    </label>
+    <label class="filter">
+      <span>Camera</span>
+      <select name="camera" class="dialog-select"><option value="">Any</option></select>
+    </label>
+    <label class="filter">
+      <span>Year</span>
+      <select name="year" class="dialog-select"><option value="">Any</option></select>
+    </label>
+    <label class="filter">
+      <span>Album</span>
+      <select name="album" class="dialog-select"><option value="">Any</option></select>
+    </label>
+    <label class="filter">
+      <span>Kind</span>
+      <select name="type" class="dialog-select"><option value="">Any</option></select>
+    </label>
+    <label class="filter">
+      <span>At least</span>
+      <select name="min_bytes" class="dialog-select">
+        <option value="">Any size</option>
+        <option value="1000000">1 MB</option>
+        <option value="5000000">5 MB</option>
+        <option value="20000000">20 MB</option>
+      </select>
+    </label>
+    <label class="filter">
+      <span>Video longer than</span>
+      <select name="min_duration" class="dialog-select">
+        <option value="">Any length</option>
+        <option value="5">5 seconds</option>
+        <option value="30">30 seconds</option>
+        <option value="60">1 minute</option>
+      </select>
+    </label>
+    <label class="filter">
+      <span>Sort</span>
+      <select name="sort" class="dialog-select">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="largest">Largest first</option>
+        <option value="smallest">Smallest first</option>
+        <option value="longest">Longest video</option>
+      </select>
+    </label>
+
+    <fieldset class="filter-flags">
+      <legend class="visually-hidden">Limit to</legend>
+      <button type="button" class="btn-floating" data-flag="favorite" aria-pressed="false">Favourites</button>
+      <button type="button" class="btn-floating" data-flag="located" aria-pressed="false">Has location</button>
+      <button type="button" class="btn-floating" data-flag="in_icloud" data-value="false" aria-pressed="false">Backup only</button>
+      <button type="button" class="btn-floating" data-flag="backed_up" data-value="false" aria-pressed="false">Not backed up</button>
+      <button type="button" class="btn-floating" data-flag="mark" data-value="delete" aria-pressed="false">Marked to delete</button>
+      <button type="button" class="btn-floating" id="clear-filters">Clear</button>
+    </fieldset>
+  </form>
+
+  <p id="result-count" class="photos-summary" role="status"></p>
+
+  <ul id="grid" class="card-grid photo-grid"></ul>
+
+  <div class="grid-footer">
+    <button type="button" id="load-more" class="btn-floating" hidden>Show more</button>
+    <p id="grid-empty" class="photos-summary" hidden>Nothing matches those filters.</p>
+  </div>
+</main>
+
+<dialog id="detail" class="app-dialog photo-detail" aria-labelledby="detail-title">
+  <figure class="detail-figure">
+    <img id="detail-image" alt="">
+    <figcaption id="detail-title"></figcaption>
+  </figure>
+  <dl id="detail-facts" class="detail-facts"></dl>
+  <div class="dialog-actions">
+    <button type="button" id="detail-mark" class="btn-floating" aria-pressed="false">Mark to delete</button>
+    <button type="button" id="detail-close" class="btn-floating">Close</button>
+  </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('photos.static', filename='gallery.js') }}"></script>
+{% endblock %}

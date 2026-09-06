@@ -36,3 +36,24 @@ export function formatDistance(meters) {
 export function isFiniteCoordinate(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
+
+// Decimal units, matching how Apple counts iCloud storage, so the numbers line
+// up with what Settings shows.
+export function formatBytes(bytes) {
+  if (!bytes) return "—";
+  let size = bytes;
+  for (const unit of ["B", "KB", "MB", "GB"]) {
+    if (size < 1000) return `${size.toFixed(1)} ${unit}`;
+    size /= 1000;
+  }
+  return `${size.toFixed(1)} TB`;
+}
+
+// Date only, and always with the year: unlike a device fix, a photo library
+// spans enough years that eliding the current one would be ambiguous.
+export function formatDate(isoString) {
+  const date = new Date(isoString);
+  return Number.isNaN(date.getTime())
+    ? "unknown date"
+    : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}

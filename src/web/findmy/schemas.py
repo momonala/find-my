@@ -10,9 +10,9 @@ import sqlite3
 from typing import Any
 
 from flask import abort
-from flask import request
 
 from src.findmy.tracking import distance_from_home_m_at
+from src.web.schemas import json_object_body
 
 VALID_ALERT_TYPES = {"movement", "enter", "exit"}
 VALID_ANCHORS = {"home", "current"}
@@ -78,21 +78,13 @@ def serialize_alert(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def _json_object_body(expected: str) -> dict[str, Any]:
-    """The request body as a JSON object, aborting 400 with `expected` if it isn't one."""
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(400, description=f"Body must be a JSON object with {expected}.")
-    return payload
-
-
 def parse_icon_payload() -> str | None:
     """Return the requested emoji, or None to clear it, aborting 400 on junk.
 
     Without a cap this column is arbitrary user-controlled storage that every
     dashboard visitor then renders, so the shape is checked rather than trusted.
     """
-    payload = _json_object_body(_EMOJI_BODY_SHAPE)
+    payload = json_object_body(_EMOJI_BODY_SHAPE)
     if "emoji" not in payload:
         abort(400, description=f"Body must be a JSON object with {_EMOJI_BODY_SHAPE}.")
 
@@ -139,7 +131,7 @@ def _parse_alert_fields(payload: dict[str, Any]) -> tuple[str, float, str]:
 
 def parse_alert_payload() -> tuple[str, str, float, str]:
     """Return (device_id, alert_type, threshold_m, anchor) from the request body, aborting 400 on junk."""
-    payload = _json_object_body("'device_id', 'alert_type', and 'threshold_m'")
+    payload = json_object_body("'device_id', 'alert_type', and 'threshold_m'")
 
     device_id = payload.get("device_id")
     if not isinstance(device_id, str) or not device_id:
@@ -155,4 +147,4 @@ def parse_alert_update_payload() -> tuple[str, float, str]:
     No `device_id` here -- an alert's device is fixed at creation, so editing
     only ever touches type/threshold/anchor.
     """
-    return _parse_alert_fields(_json_object_body("'alert_type' and 'threshold_m'"))
+    return _parse_alert_fields(json_object_body("'alert_type' and 'threshold_m'"))

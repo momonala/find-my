@@ -1,0 +1,160 @@
+/* The gallery: a filter bar over a thumbnail grid. Every value here comes from
+   tokens.css, so the page follows the shell rather than theming itself. */
+
+.photos-header {
+  margin-bottom: var(--space-5);
+}
+
+/* The shell's page title sits above body copy; here a summary line follows it. */
+.photos-header .page-title {
+  margin-bottom: var(--space-2);
+}
+
+.photos-summary {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.photos-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: end;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.filter .dialog-input,
+.filter .dialog-select {
+  min-width: 9rem;
+}
+
+.filter-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+#result-count {
+  margin: var(--space-4) 0 var(--space-3);
+}
+
+/* Everything else comes from the shell's .card-grid; thumbnails just want a
+   tighter track than nav cards do. */
+.photo-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.photo-card {
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+/* The one accent on the page, and it maps to real state: this asset is
+   flagged for deletion from iCloud. */
+.photo-card[data-mark="delete"] {
+  outline: 2px solid var(--color-danger);
+  outline-offset: -2px;
+}
+
+.photo-button {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.photo-button img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: var(--color-bg);
+  display: block;
+}
+
+.photo-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.photo-caption {
+  padding: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.photo-button:hover .photo-caption,
+.photo-button:focus-visible .photo-caption {
+  color: var(--color-text);
+}
+
+.grid-footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-5) 0;
+}
+
+.photo-detail {
+  max-width: min(90vw, 880px);
+  /* The image is tall and the facts list grows with what the asset carries, so
+     the panel scrolls rather than pushing its own buttons off-screen. */
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.detail-figure {
+  margin: 0 0 var(--space-4);
+}
+
+.detail-figure img {
+  width: 100%;
+  max-height: 50vh;
+  object-fit: contain;
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.detail-figure figcaption {
+  margin-top: var(--space-2);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.detail-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-4);
+  font-size: 0.875rem;
+}
+
+.detail-facts dt {
+  color: var(--color-text-muted);
+}
+
+.detail-facts dd {
+  margin: 0;
+}

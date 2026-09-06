@@ -48,7 +48,13 @@ dev = [
 # Deliberately absent from `default-groups`, so install/install.sh's plain
 # `uv sync` leaves it off the deploy target. Run the tool with
 # `uv run --group photos python -m icloud_photo_metadata ...`.
-photos = ["tqdm>=4.66.0"]
+photos = [
+    "tqdm>=4.66.0",
+    # The gallery resizes originals on request; 76% of the library is HEIC,
+    # which browsers other than Safari will not render.
+    "pillow>=10.0.0",
+    "pillow-heif>=0.16.0",
+]
 
 [tool.config]
 # Reference point that Find My distances are measured from. Five decimal places
@@ -117,7 +123,7 @@ mypy_path = "."
 
 [[tool.mypy.overrides]]
 # None of these ship type stubs or a py.typed marker.
-module = ["pyicloud.*", "findmy.*", "requests.*", "spyglass.*", "tqdm.*", "joblib.*"]
+module = ["pyicloud.*", "findmy.*", "requests.*", "spyglass.*", "tqdm.*", "joblib.*", "pillow_heif.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
