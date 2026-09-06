@@ -6,7 +6,6 @@
 {% endblock %}
 
 {% block content %}
-{% from "_icons.html" import icon with context %}
 <main class="page photos-page">
   {#- The nav bar names the page; this keeps the document outline intact. -#}
   <h1 class="visually-hidden">Photos</h1>
@@ -33,6 +32,7 @@
       <option value="">Any size</option>
       <option value="1000000">1 MB or more</option>
       <option value="5000000">5 MB or more</option>
+      <option value="10000000">10 MB or more</option>
       <option value="20000000">20 MB or more</option>
     </select>
     <select name="min_duration" class="dialog-select filter-control" aria-label="Minimum video length">
@@ -61,12 +61,7 @@
     </button>
   </form>
 
-  <div class="grid-toolbar">
-    <p id="result-count" class="photos-summary" role="status"></p>
-    <button type="button" id="toggle-filters" class="btn-floating btn-icon"
-            aria-expanded="true" aria-controls="filters" aria-label="Hide filters"
-            title="Hide filters">{{ icon('sliders') }}</button>
-  </div>
+  <p id="result-count" class="photos-summary" role="status"></p>
 
   <ul id="grid" class="card-grid photo-grid"></ul>
 

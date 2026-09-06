@@ -18,7 +18,6 @@ const resultCount = document.getElementById("result-count");
 const librarySummary = document.getElementById("library-summary");
 const loadMore = document.getElementById("load-more");
 const perRow = document.getElementById("per-row");
-const toggleFilters = document.getElementById("toggle-filters");
 const gridEmpty = document.getElementById("grid-empty");
 const detail = document.getElementById("detail");
 
@@ -372,13 +371,6 @@ function applyDensity() {
 
 perRow.addEventListener("change", applyDensity);
 
-toggleFilters.addEventListener("click", () => {
-  const shown = toggleFilters.getAttribute("aria-expanded") === "true";
-  toggleFilters.setAttribute("aria-expanded", String(!shown));
-  toggleFilters.setAttribute("aria-label", shown ? "Show filters" : "Hide filters");
-  toggleFilters.title = shown ? "Show filters" : "Hide filters";
-  form.hidden = shown;
-});
 loadMore.addEventListener("click", () => loadPage({ append: true }));
 document.getElementById("detail-close").addEventListener("click", () => detail.close());
 document.getElementById("detail-mark").addEventListener("click", (event) => toggleMark(event.currentTarget));

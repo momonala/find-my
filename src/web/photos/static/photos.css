@@ -37,26 +37,8 @@
   backdrop-filter: none;
 }
 
-.grid-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+#result-count {
   margin: var(--space-2) 0;
-}
-
-#toggle-filters {
-  box-shadow: none;
-  backdrop-filter: none;
-  flex-shrink: 0;
-}
-
-/* The disclosure state is the highlight, so the icon reads as on or off
-   without a second attribute saying the same thing. */
-#toggle-filters[aria-expanded="true"] {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #ffffff;
 }
 
 /* Everything else comes from the shell's .card-grid. The column count is the
