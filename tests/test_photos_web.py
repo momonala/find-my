@@ -70,6 +70,20 @@ def client(drive: Path) -> Iterator[FlaskClient]:
         yield test_client
 
 
+def _back_up_the_clip(drive: Path, contents: bytes = b"a movie") -> Path:
+    """Put the fixture's movie on the drive and record it as backed up."""
+    movie = drive / "2024" / "IMG_2~clip.MOV"
+    movie.write_bytes(contents)
+    with library.library(drive) as conn:
+        library.record_files(
+            conn,
+            "clip",
+            [BackedUpFile(library.ORIGINAL, "2024/IMG_2~clip.MOV", movie.stat().st_size, "hash")],
+            recorded_as="downloaded",
+        )
+    return movie
+
+
 def test_the_gallery_lists_every_asset_with_what_a_card_needs(client: FlaskClient) -> None:
     body = client.get("/api/photos/assets").get_json()
 
@@ -78,10 +92,18 @@ def test_the_gallery_lists_every_asset_with_what_a_card_needs(client: FlaskClien
     assert body["next_offset"] is None
 
 
+def test_a_filtered_page_reports_the_size_of_everything_it_matched(client: FlaskClient) -> None:
+    """A count alone does not say whether pruning a filter is worth doing."""
+    movies = client.get("/api/photos/assets?type=movie").get_json()
+    whole = client.get("/api/photos/assets").get_json()
+
+    assert movies["total_bytes"] == 1000
+    assert whole["total_bytes"] > movies["total_bytes"]
+
+
 def test_filters_reach_the_query_layer_from_the_query_string(client: FlaskClient) -> None:
     assert client.get("/api/photos/assets?type=movie").get_json()["total"] == 1
     assert client.get("/api/photos/assets?backed_up=true").get_json()["total"] == 1
-    assert client.get("/api/photos/assets?search=IMG_3").get_json()["total"] == 1
 
 
 def test_an_unknown_sort_is_a_bad_request_not_a_broken_query(client: FlaskClient) -> None:
@@ -123,13 +145,15 @@ def test_marking_an_asset_survives_and_shows_up_in_the_totals(client: FlaskClien
     assert client.get("/api/photos/assets?mark=icloud").get_json()["total"] == 0
 
 
-def test_the_gallery_can_show_everything_marked_at_either_level(client: FlaskClient) -> None:
+def test_the_gallery_can_show_everything_marked_anywhere(client: FlaskClient) -> None:
     """The question you ask before pruning: what did I flag, all of it?"""
     client.put("/api/photos/assets/still/mark", json={"mark": "icloud"})
     client.put("/api/photos/assets/clip/mark", json={"mark": "everywhere"})
+    client.put("/api/photos/assets/unbacked/mark", json={"mark": "drive"})
 
-    assert client.get("/api/photos/assets?mark=any").get_json()["total"] == 2
+    assert client.get("/api/photos/assets?mark=any").get_json()["total"] == 3
     assert client.get("/api/photos/assets?mark=icloud").get_json()["total"] == 1
+    assert client.get("/api/photos/assets?mark=drive").get_json()["total"] == 1
     assert client.get("/api/photos/assets?mark=everywhere").get_json()["total"] == 1
     assert client.get("/api/photos/assets").get_json()["total"] == 3
 
@@ -385,15 +409,7 @@ def test_a_movie_gets_a_frame_rather_than_a_placeholder(
     client: FlaskClient, drive: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """There is no still on the drive for a movie, so one is taken from it."""
-    movie = drive / "2024" / "IMG_2~clip.MOV"
-    movie.write_bytes(b"not really a movie, ffmpeg is faked")
-    with library.library(drive) as conn:
-        library.record_files(
-            conn,
-            "clip",
-            [BackedUpFile(library.ORIGINAL, "2024/IMG_2~clip.MOV", movie.stat().st_size, "hash")],
-            recorded_as="downloaded",
-        )
+    _back_up_the_clip(drive, b"not really a movie, ffmpeg is faked")
 
     frame = drive / "frame.jpg"
     Image.new("RGB", (1920, 1080), "purple").save(frame, "JPEG")
@@ -410,15 +426,51 @@ def test_a_movie_with_no_ffmpeg_to_read_it_is_a_415(
     client: FlaskClient, drive: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The tile falls back to its own placeholder; the route must not 500."""
-    movie = drive / "2024" / "IMG_2~clip.MOV"
-    movie.write_bytes(b"a movie")
-    with library.library(drive) as conn:
-        library.record_files(
-            conn,
-            "clip",
-            [BackedUpFile(library.ORIGINAL, "2024/IMG_2~clip.MOV", movie.stat().st_size, "hash")],
-            recorded_as="downloaded",
-        )
+    _back_up_the_clip(drive)
     monkeypatch.setattr(thumbnails.shutil, "which", lambda _name: None)
 
     assert client.get("/api/photos/assets/clip/image?size=grid").status_code == 415
+
+
+def test_a_movie_is_served_as_its_own_bytes_for_a_player_to_play(client: FlaskClient, drive: Path) -> None:
+    """A .MOV plays as-is: converting one on request is not a page's wait."""
+    contents = b"\x00\x00\x00\x14ftypqt   pretend this is H.264"
+    _back_up_the_clip(drive, contents)
+
+    response = client.get("/api/photos/assets/clip/video")
+
+    assert response.status_code == 200
+    assert response.mimetype == "video/quicktime"
+    assert response.data == contents
+
+
+def test_a_movie_serves_a_byte_range_so_a_player_can_seek(client: FlaskClient, drive: Path) -> None:
+    """Safari will not start a video at all without a 206 to its range request."""
+    _back_up_the_clip(drive, b"0123456789")
+
+    response = client.get("/api/photos/assets/clip/video", headers={"Range": "bytes=2-5"})
+
+    assert response.status_code == 206
+    assert response.data == b"2345"
+
+
+def test_a_photo_is_not_something_the_video_route_will_hand_out(client: FlaskClient) -> None:
+    """Otherwise the route is a way to pull any original off the drive whole."""
+    assert client.get("/api/photos/assets/still/video").status_code == 415
+
+
+def test_a_movie_with_no_copy_on_the_drive_cannot_be_played(client: FlaskClient) -> None:
+    assert client.get("/api/photos/assets/clip/video").status_code == 404
+
+
+def test_a_card_says_whether_it_is_a_movie_a_browser_can_play(client: FlaskClient, drive: Path) -> None:
+    """Apple files animated GIFs as movies, and those are stills to a browser."""
+    with library.library(drive) as conn:
+        library.replace_assets(conn, [make_photo("looping", "IMG_8.GIF", item_type="movie")])
+
+    playable = {
+        asset["id"]: asset["playable"] for asset in client.get("/api/photos/assets").get_json()["assets"]
+    }
+
+    assert playable == {"still": False, "clip": True, "unbacked": False, "looping": False}
+    assert client.get("/api/photos/assets/clip").get_json()["playable"] is True

@@ -82,7 +82,6 @@ def test_the_unfiltered_gallery_is_every_asset_newest_first(conn: sqlite3.Connec
         (Filters(min_bytes=5_000_000), ["still-2024"]),
         (Filters(min_duration=10), ["clip"]),
         (Filters(max_duration=10), []),
-        (Filters(search="IMG_3"), ["clip"]),
         (Filters(sort="largest"), ["still-2024", "clip", "hidden", "still-2023"]),
         (Filters(sort="oldest"), ["still-2023", "hidden", "clip", "still-2024"]),
     ],
@@ -134,11 +133,28 @@ def test_a_page_says_where_the_next_one_starts_and_when_there_is_none(conn: sqli
     assert (len(last.rows), last.next_offset) == (1, None)
 
 
+def test_a_page_tallies_the_bytes_behind_every_match_not_just_its_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    """The tally answers how much a filter covers, so it spans past the page."""
+    stock(conn)
+
+    whole = queries.search(conn, Filters(), limit=1)
+    movies = queries.search(conn, Filters(item_type="movie"), limit=1)
+    # A size filter already joins the resources table; the tally must not
+    # double-count by reaching for it a second time.
+    large = queries.search(conn, Filters(min_bytes=5_000), limit=1)
+
+    assert (whole.total, whole.total_bytes) == (4, 6_012_000)
+    assert (movies.total, movies.total_bytes) == (1, 9_000)
+    assert (large.total, large.total_bytes) == (2, 6_009_000)
+
+
 def test_a_grid_row_never_carries_the_exif_blob(conn: sqlite3.Connection) -> None:
     """Reading 34 MB of plists off the drive costs a grid page a second."""
     stock(conn)
 
-    [row] = queries.search(conn, Filters(search="IMG_1")).rows
+    [row] = queries.search(conn, Filters(), limit=1).rows
 
     assert "exif" not in row
     assert "camera_model" not in row
@@ -210,6 +226,25 @@ def test_an_unknown_mark_is_refused(conn: sqlite3.Connection) -> None:
         queries.set_mark(conn, "clip", "burn")
 
 
+def test_totals_count_icloud_and_the_drive_apart(conn: sqlite3.Connection) -> None:
+    """An asset can be in iCloud, on the drive, or both, and the line says which.
+
+    The drive's bytes are the file's own, not the size iCloud reports for the
+    original, so the two figures are not a split of one number.
+    """
+    library.replace_assets(conn, [make_photo("both", "IMG_1.HEIC", size=6_000_000)])
+    library.restore_assets(conn, [make_photo("drive-only", "IMG_2.HEIC", size=2_000)])
+    for asset_id, path in (("both", "2024/IMG_1.HEIC"), ("drive-only", "2024/IMG_2.HEIC")):
+        library.record_files(
+            conn, asset_id, [BackedUpFile(library.ORIGINAL, path, 500, "hash")], recorded_as="downloaded"
+        )
+
+    found = queries.totals(conn)
+
+    assert (found["in_icloud"], found["in_icloud_bytes"]) == (1, 6_000_000)
+    assert (found["on_disk"], found["on_disk_bytes"]) == (2, 1_000)
+
+
 def test_totals_report_the_library_and_what_is_marked(conn: sqlite3.Connection) -> None:
     stock(conn)
     queries.set_mark(conn, "still-2024", "icloud")
@@ -219,3 +254,7 @@ def test_totals_report_the_library_and_what_is_marked(conn: sqlite3.Connection) 
     assert found["assets"] == 4
     assert found["marked"] == 1
     assert found["marked_bytes"] == 6_000_000
+    # Every stock asset is in iCloud and none has been backed up to the drive,
+    # so the two locations are the totals apart rather than a split of them.
+    assert (found["in_icloud"], found["in_icloud_bytes"]) == (4, 6_012_000)
+    assert (found["on_disk"], found["on_disk_bytes"]) == (0, 0)

@@ -76,13 +76,47 @@
   padding: var(--space-1) var(--space-2);
 }
 
-.filter-search {
-  flex: 0 1 8rem;
-  width: 8rem;
+/* Every count on one line. Three levels of hierarchy carry it: each number is
+   bright against its own muted label, the groups are divided from each other,
+   and the filtered figure is set apart in the accent so the figure a click
+   moves never reads as one of the library's standing facts. */
+.photos-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-2) 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
 }
 
-#result-count {
-  margin: var(--space-2) 0;
+.photos-count-set {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+/* A rule rather than another "·": the bullet already separates a count from
+   its own size, so reusing it between groups would flatten the two apart. */
+.photos-count-set > .photos-count + .photos-count {
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--color-border);
+}
+
+.photos-count > strong {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.photos-count-match {
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--color-accent);
+}
+
+.photos-count-match > .photos-count > strong {
+  color: var(--color-accent);
 }
 
 /* Everything else comes from the shell's .card-grid. The column count is the
@@ -106,7 +140,7 @@
 }
 
 /* The one accent on the page, and it maps to real state: this asset is
-   flagged for deletion. Solid where the drive keeps its copy, dashed where the
+   flagged for deletion. Solid while a copy survives somewhere, dashed where the
    mark takes the last one -- a difference worth seeing from across the grid. */
 .photo-card[data-mark] {
   outline: 2px solid var(--color-danger);
@@ -174,7 +208,47 @@
   opacity: 1;
 }
 
+/* Top-left corner of a tile: what the asset is, then where its bytes are. The
+   caption underneath carries the date and size, so the corner is the only
+   place a fact about the asset itself can read at thumbnail size. */
+.photo-badges {
+  position: absolute;
+  inset: var(--space-1) auto auto var(--space-1);
+  display: flex;
+  gap: 3px;
+  pointer-events: none;
+}
+
+/* A round plate rather than a bare mark: three icons in a row over an
+   arbitrary photo need their own ground to stay legible, and a circle is the
+   one shape that does not add to a grid that is already all rectangles. */
+.photo-badge {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.45));
+}
+
+.photo-badge.is-present {
+  color: var(--color-success);
+}
+
+.photo-badge.is-absent {
+  color: var(--color-danger);
+}
+
+.photo-badge-icon {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
 .photo-placeholder {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
@@ -246,19 +320,31 @@
   overflow-wrap: anywhere;
 }
 
-/* Two levels reading as one control, so the choice between them is the
-   obvious thing to make and neither looks like the default. */
+/* The label sits inside the group so the two buttons read as the answer to
+   it, and they join into one control so they read as places to pick rather
+   than as two unrelated actions. */
 .detail-marks {
   display: flex;
-  gap: 1px;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.detail-marks .btn-floating:first-child {
+.detail-marks-label {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.detail-marks .detail-mark + .detail-mark {
+  margin-left: -1px;
+}
+
+.detail-marks .detail-mark:first-of-type {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 
-.detail-marks .btn-floating:last-child {
+.detail-marks .detail-mark:last-of-type {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
@@ -302,13 +388,30 @@
   flex-shrink: 0;
 }
 
+/* `position: relative` + absolutely placed media, rather than a centred grid
+   and `max-height: 100%`: a percentage height against a `1fr` grid row is not
+   resolved by every engine, and where it is not the picture lays out at its
+   intrinsic size and spills out of the dialog. Pinned to the figure's own box
+   the fit holds everywhere, and `contain` keeps the aspect ratio. */
 .detail-figure {
   margin: 0;
   min-height: 0;
-  display: grid;
-  place-items: center;
+  position: relative;
+  overflow: hidden;
   background: var(--color-bg);
   border-radius: var(--radius);
+}
+
+/* The media is taken out of flow, so the codec fallback needs placing on its
+   own rather than riding on the figure's old centring. */
+.detail-figure .photo-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: var(--space-4);
+  text-align: center;
 }
 
 .detail-figure.is-pending {
@@ -316,11 +419,17 @@
   animation: pending-pulse var(--duration-pending-pulse) ease-in-out infinite;
 }
 
-.detail-figure img {
-  max-width: 100%;
-  max-height: 100%;
+.detail-figure img,
+.detail-figure video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   border-radius: var(--radius);
+}
+
+.detail-figure img {
   opacity: 0;
   transition: opacity var(--duration-quick) var(--ease-smooth-out);
 }
@@ -328,6 +437,7 @@
 .detail-figure img.is-loaded {
   opacity: 1;
 }
+
 
 .detail-meta {
   min-height: 0;

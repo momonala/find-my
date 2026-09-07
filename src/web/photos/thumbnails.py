@@ -41,8 +41,10 @@ SIZES = {"grid": 400, "detail": 1600}
 _JPEG_QUALITY = 82
 
 
-# Everything the library files as `item_type = movie`.
-_VIDEO_SUFFIXES = frozenset({".mov", ".mp4", ".m4v"})
+# The movie containers, as opposed to the animated stills Apple also files as
+# `item_type = movie` (GIF, WEBP, AVIF), which Pillow renders like any photo.
+# Also what the video route will hand a browser to play.
+VIDEO_SUFFIXES = frozenset({".mov", ".mp4", ".m4v"})
 
 # Long enough for a frame off a USB disk, short enough that a file ffmpeg
 # cannot make sense of does not hold a request thread.
@@ -74,7 +76,7 @@ def thumbnail(original: Path, size: str) -> Path:
     partial = Path(partial_name)
     # A frame is a full-size JPEG that then goes through the same resize as any
     # other original, so a movie's tile and a photo's are made the same way.
-    frame = _poster_frame(original) if original.suffix.lower() in _VIDEO_SUFFIXES else None
+    frame = _poster_frame(original) if original.suffix.lower() in VIDEO_SUFFIXES else None
     try:
         with Image.open(frame or original) as image:
             # iPhone writes the sensor's orientation to EXIF rather than

@@ -211,7 +211,7 @@ def verify_command() -> None:
 @app.command("prune")
 def prune_command(
     mark: str = typer.Option(
-        None, help=f"Only carry out one level of mark: {', '.join(MARKS)}. The default does both."
+        None, help=f"Only carry out one kind of mark: {', '.join(MARKS)}. The default does them all."
     ),
     yes: bool = typer.Option(False, "--yes", help="Skip the confirmation and delete."),
 ) -> None:
@@ -264,11 +264,16 @@ def _print_prune_plan(plan: pruning.PrunePlan) -> None:
         targets = [target for target in plan.ready if target.mark == mark]
         if not targets:
             continue
-        drive = sum(target.drive_bytes for target in targets) if mark == queries.EVERYWHERE else 0
+        drive = sum(target.drive_bytes for target in targets) if mark in (queries.DRIVE, queries.EVERYWHERE) else 0
+        icloud = sum(
+            target.icloud_bytes
+            for target in targets
+            if target.in_icloud and mark in (queries.ICLOUD, queries.EVERYWHERE)
+        )
         summary.add_row(
             _MARK_LABELS[mark],
             f"{len(targets):,}",
-            format_bytes(sum(target.icloud_bytes for target in targets if target.in_icloud)),
+            format_bytes(icloud) if icloud else "-",
             format_bytes(drive) if drive else "-",
         )
     console.print(summary)
@@ -284,6 +289,7 @@ def _print_prune_plan(plan: pruning.PrunePlan) -> None:
 
 _MARK_LABELS = {
     queries.ICLOUD: "iCloud only, the drive keeps its copy",
+    queries.DRIVE: "the drive only, iCloud keeps its copy",
     queries.EVERYWHERE: "iCloud and the drive, the last copy",
 }
 

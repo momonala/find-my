@@ -34,7 +34,6 @@ def parse_filters() -> Filters:
         abort(400, description=f"Unknown mark {mark!r}; expected one of {list(MARK_FILTERS)}.")
 
     return Filters(
-        search=request.args.get("search") or None,
         album=request.args.get("album") or None,
         item_type=request.args.get("type") or None,
         camera_model=request.args.get("camera") or None,
@@ -69,10 +68,10 @@ def parse_mark_payload() -> str | None:
 
 
 def parse_prune_payload() -> str | None:
-    """Which level of mark a prune should carry out, or None for every level.
+    """Which kind of mark a prune should carry out, or None for every kind.
 
-    An absent `mark` is the deliberate default: the button that prunes both
-    sends no body at all.
+    An absent `mark` is the deliberate default: the button that prunes
+    everything sends no body at all.
 
     Raises:
         HTTPException: 400 if the body names a mark this library does not have.

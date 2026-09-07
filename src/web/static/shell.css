@@ -7,6 +7,13 @@
   box-sizing: border-box;
 }
 
+/* The attribute means "not in the page", and any rule setting `display` on a
+   class the element also carries would otherwise beat the UA's `display: none`
+   and put it back on screen. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;

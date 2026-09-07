@@ -127,6 +127,52 @@ def test_an_everywhere_mark_needs_no_backup_to_fall_back_on(drive: Path) -> None
     assert [target.asset_id for target in plan.ready] == ["unbacked"]
 
 
+def test_a_drive_mark_whose_photo_is_still_in_icloud_is_ready(drive: Path) -> None:
+    """The surviving copy is Apple's, so there is nothing on the drive to verify."""
+    plan = plan_for(drive, "kept", queries.DRIVE)
+
+    assert [target.asset_id for target in plan.ready] == ["kept"]
+    assert plan.drive_bytes == len(BYTES)
+    # iCloud keeps its copy, so this frees nothing there.
+    assert plan.icloud_bytes == 0
+
+
+def test_a_drive_mark_is_refused_once_the_photo_has_left_icloud(drive: Path) -> None:
+    """The mirror of the `icloud` gate: never delete the copy that is the last one."""
+    with library.library(drive) as conn:
+        queries.set_mark(conn, "kept", queries.DRIVE)
+        library.record_gone(conn, "kept")
+        plan = prune.build_plan(conn, drive)
+
+    assert plan.is_empty
+    assert "the drive holds the only copy" in plan.blocked[0].reason
+
+
+def test_a_drive_mark_on_an_asset_the_drive_never_held_is_refused(drive: Path) -> None:
+    plan = plan_for(drive, "unbacked", queries.DRIVE)
+
+    assert plan.is_empty
+    assert "nothing on the drive to delete" in plan.blocked[0].reason
+
+
+def test_a_drive_prune_takes_the_drive_copy_and_leaves_icloud_alone(drive: Path, icloud: FakeICloud) -> None:
+    original = drive / "2024" / "IMG_1~kept.HEIC"
+    with library.library(drive) as conn:
+        queries.set_mark(conn, "kept", queries.DRIVE)
+        outcome = prune.apply_plan(prune.build_plan(conn, drive), drive, conn, api=None)
+
+    assert icloud.deleted == []
+    assert outcome.freed_icloud == ()
+    assert outcome.freed_drive == ("kept",)
+    assert outcome.icloud_bytes == 0
+    assert not original.exists()
+
+    with library.reading(drive) as conn:
+        assert _in_icloud(conn, "kept") == 1
+        assert queries.original_path(conn, "kept") is None
+        assert queries.pending_marks(conn) == []
+
+
 def test_an_asset_already_gone_from_everywhere_is_not_deleted_again(drive: Path) -> None:
     with library.library(drive) as conn:
         queries.set_mark(conn, "unbacked", queries.EVERYWHERE)
@@ -190,7 +236,7 @@ def test_a_refused_icloud_delete_leaves_the_asset_and_the_mark_alone(
         assert _in_icloud(conn, "kept") == 1
 
 
-def test_a_plan_can_be_held_to_one_level(drive: Path) -> None:
+def test_a_plan_can_be_held_to_one_kind_of_mark(drive: Path) -> None:
     with library.library(drive) as conn:
         queries.set_mark(conn, "kept", queries.ICLOUD)
         queries.set_mark(conn, "unbacked", queries.EVERYWHERE)

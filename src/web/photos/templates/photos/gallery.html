@@ -10,7 +10,13 @@
 <main class="page photos-page">
   {#- The nav bar names the page; this keeps the document outline intact. -#}
   <h1 class="visually-hidden">Photos</h1>
-  <p id="library-summary" class="photos-summary" hidden></p>
+  {#- Every count on one line: the library, then where its bytes actually are,
+      then what the filters narrowed it to. The filtered figure is the one a
+      click moves, so it sits last and reads loudest. -#}
+  <div class="photos-counts">
+    <p id="library-summary" class="photos-count-set" hidden></p>
+    <p id="result-count" class="photos-count-set photos-count-match" role="status" hidden></p>
+  </div>
 
   {#- One row: every filter, then the two buttons that change the library
       rather than the view of it. Those stay outside the form -- nothing they
@@ -19,8 +25,6 @@
     {#- No labels: each control's resting option says what it filters, and
         shows the chosen value once there is one. -#}
     <form id="filters" class="photos-filters" aria-label="Filter the library">
-      <input type="search" name="search" class="dialog-input filter-control filter-search"
-             placeholder="Filename" aria-label="Search filenames" autocomplete="off">
       <select name="camera" class="dialog-select filter-control" aria-label="Camera">
         <option value="">Camera (any)</option>
       </select>
@@ -61,11 +65,12 @@
         <option value="12">12 per row</option>
         <option value="16">16 per row</option>
       </select>
-      <select name="mark" class="dialog-select filter-control" aria-label="Marked for deletion">
-        <option value="">Mark (any)</option>
-        <option value="any">Marked, either level</option>
+      <select name="mark" class="dialog-select filter-control" aria-label="Marked to delete from">
+        <option value="">Delete from (any)</option>
+        <option value="any">Marked, any location</option>
         <option value="icloud">Marked: iCloud only</option>
-        <option value="everywhere">Marked: everywhere</option>
+        <option value="drive">Marked: local only</option>
+        <option value="everywhere">Marked: local + iCloud</option>
       </select>
     </form>
 
@@ -78,9 +83,32 @@
     </div>
   </div>
 
-  <p id="result-count" class="photos-summary" role="status"></p>
-
   <ul id="grid" class="photo-grid" aria-busy="false"></ul>
+
+  {#- Cloned onto every tile so the kind of an asset, and where its bytes still
+      are, read from the grid itself. Templates rather than SVG built in JS, so
+      the page keeps one icon mechanism: the same macro the toolbar draws from. -#}
+  <template id="kind-badge-movie">
+    <span class="photo-badge" title="Video">{{ icon("play", "photo-badge-icon") }}</span>
+  </template>
+  <template id="kind-badge-image">
+    <span class="photo-badge" title="Photo">{{ icon("camera", "photo-badge-icon") }}</span>
+  </template>
+  {#- The cloud is iCloud's copy, the house the drive's. Struck through and red
+      is a copy that is not there, which is the whole point of the pair: an
+      asset down to one copy is the one to think twice about deleting. -#}
+  <template id="state-badge-icloud-on">
+    <span class="photo-badge is-present" title="In iCloud">{{ icon("cloud", "photo-badge-icon") }}</span>
+  </template>
+  <template id="state-badge-icloud-off">
+    <span class="photo-badge is-absent" title="Not in iCloud">{{ icon("cloud-off", "photo-badge-icon") }}</span>
+  </template>
+  <template id="state-badge-local-on">
+    <span class="photo-badge is-present" title="On this drive">{{ icon("house", "photo-badge-icon") }}</span>
+  </template>
+  <template id="state-badge-local-off">
+    <span class="photo-badge is-absent" title="Not on this drive">{{ icon("house-off", "photo-badge-icon") }}</span>
+  </template>
 
   <div class="grid-footer">
     <button type="button" id="load-more" class="btn-floating" hidden>Show more</button>
@@ -94,12 +122,13 @@
   <h2 id="prune-confirm-title">Delete what is marked?</h2>
   <ul id="prune-confirm-lines" class="prune-lines"></ul>
   <p class="photos-summary">
-    Deleted assets go to Recently Deleted, where Apple keeps them for 30 days. Anything marked
-    <strong>Everywhere</strong> also loses the drive's copy, which nothing can undo.
+    What is deleted from iCloud goes to Recently Deleted, where Apple keeps it for 30 days. What is
+    deleted from <strong>local</strong> leaves the drive for good, which nothing can undo.
   </p>
   <p class="photos-summary">
-    An asset marked <strong>iCloud</strong> is skipped unless the drive's copy still hashes to what was
-    recorded. It stays marked, so it is picked up once that is fixed.
+    An asset marked <strong>iCloud only</strong> is skipped unless the drive's copy still hashes to what
+    was recorded, and one marked <strong>local only</strong> is skipped unless iCloud still holds it. Both
+    stay marked, so they are picked up once that is fixed.
   </p>
   <div class="detail-buttons">
     <button type="button" id="prune-cancel" class="btn-floating">Cancel</button>
@@ -111,20 +140,34 @@
   <header class="detail-header">
     <h2 id="detail-title"></h2>
     <div class="detail-buttons">
-      {#- Two levels, not one toggle: where the bytes go is the decision, and
-          the drive's copy is the one that cannot be undeleted. Pressing the
-          level an asset already carries clears the mark. -#}
-      <div class="detail-marks" role="group" aria-label="Mark for deletion">
-        <button type="button" class="btn-floating detail-mark" data-mark="icloud" aria-pressed="false"
-                title="Delete from iCloud and keep the drive's copy">iCloud</button>
-        <button type="button" class="btn-floating detail-mark" data-mark="everywhere" aria-pressed="false"
-                title="Delete from iCloud and from the backup drive">Everywhere</button>
+      {#- Named as the two places the bytes sit rather than as severity levels,
+          because where a copy is deleted from is the decision being made. The
+          two toggle independently and every combination is a mark the library
+          stores: iCloud, drive, or everywhere. The drive's copy is the one that
+          cannot be undeleted. -#}
+      <div class="detail-marks" role="group" aria-label="Delete from">
+        <span class="detail-marks-label">Delete from:</span>
+        <button type="button" class="btn-floating detail-mark" data-target="icloud" aria-pressed="false"
+                title="Delete the iCloud copy">iCloud</button>
+        <button type="button" class="btn-floating detail-mark" data-target="drive" aria-pressed="false"
+                title="Delete the copy on the backup drive">Local</button>
       </div>
       <button type="button" id="detail-close" class="btn-floating">Close</button>
     </div>
   </header>
+  {#- A movie gets the player and a photo gets the image; whichever is not in
+      use is hidden, so the figure never holds two things at once. The player's
+      poster is the same frame the grid tile shows, which is already cached by
+      the time anyone opens the tile it came from. -#}
   <figure class="detail-figure">
     <img id="detail-image" alt="">
+    <video id="detail-video" controls playsinline preload="metadata" hidden></video>
+    {#- A .MOV off a recent iPhone is HEVC, which not every browser decodes.
+        The element's own fallback content only shows where `<video>` itself is
+        unsupported, so a codec it cannot read needs saying here. -#}
+    <p id="detail-video-error" class="photo-placeholder" hidden>
+      This browser cannot play this file.
+    </p>
   </figure>
   <div id="detail-meta" class="detail-meta"></div>
 </dialog>

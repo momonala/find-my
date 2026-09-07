@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from icloud_photo_metadata import library
+from icloud_photo_metadata import queries
 from icloud_photo_metadata.library import BackedUpFile
 from icloud_photo_metadata.models import GpsFix
 from icloud_photo_metadata.models import PhotoMetadata
@@ -229,6 +230,41 @@ def test_a_v1_library_is_migrated_rather_than_refused(tmp_path: Path) -> None:
             "executed_at": None,
         }
     ]
+
+
+def test_a_v2_library_keeps_its_marks_and_gains_the_drive_one(tmp_path: Path) -> None:
+    """v3 widens the mark CHECK, which SQLite can only do by rebuilding the table.
+
+    So what this pins is that the rebuild carries the rows over -- a mark is a
+    decision someone made by hand, and losing one silently un-marks a photo.
+    """
+    with library.library(tmp_path) as conn:
+        library.replace_assets(conn, [fully_populated()])
+        conn.execute("DROP TABLE marks")
+        conn.executescript("""
+            CREATE TABLE marks (
+                asset_id    TEXT PRIMARY KEY REFERENCES assets(id),
+                mark        TEXT NOT NULL CHECK (mark IN ('icloud', 'everywhere')),
+                marked_at   TEXT NOT NULL,
+                executed_at TEXT
+            );
+            INSERT INTO marks VALUES ('asset-1', 'everywhere', '2026-01-01 00:00:00', NULL);
+            PRAGMA user_version=2;
+            """)
+        conn.commit()
+
+    with library.library(tmp_path) as conn:
+        assert [dict(row) for row in conn.execute("SELECT * FROM marks")] == [
+            {
+                "asset_id": "asset-1",
+                "mark": "everywhere",
+                "marked_at": "2026-01-01 00:00:00",
+                "executed_at": None,
+            }
+        ]
+        # The point of the rebuild: a mark the old CHECK would have refused.
+        queries.set_mark(conn, "asset-1", queries.DRIVE)
+        assert [row["mark"] for row in queries.pending_marks(conn)] == [queries.DRIVE]
 
 
 def test_a_read_only_open_migrates_a_library_that_is_behind(tmp_path: Path) -> None:

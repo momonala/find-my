@@ -2,18 +2,23 @@
 
 A mark says where an asset's bytes should stop existing. `icloud` frees the
 iCloud copy and leaves the drive's, which is the whole point of having a backup.
-`everywhere` takes the drive's copy too, and is the only thing in this tool that
-lets go of the last copy of a photo.
+`drive` is its mirror: the drive's copy goes and iCloud keeps the photo.
+`everywhere` takes both, and is the only thing in this tool that lets go of the
+last copy of a photo.
 
-That asymmetry is the reason for the gate below. An `icloud` mark is refused
-unless the drive holds every file the library recorded for that asset, at the
-recorded size, hashing to the recorded digest. `everywhere` is not gated at all:
-discarding the backup is what was asked for.
+Whichever copy survives is what the gate below checks. An `icloud` mark is
+refused unless the drive holds every file the library recorded for that asset,
+at the recorded size, hashing to the recorded digest -- the surviving copy is
+the drive's, so the drive's bytes have to be real. A `drive` mark leans on
+iCloud instead and is refused when the asset is no longer there, but nothing is
+hashed: iCloud's copy is not ours to verify. `everywhere` is not gated at all,
+because discarding the last copy is what was asked for.
 
 Deleting from iCloud sets `isDeleted`, which is what the Photos app does. The
 asset lands in Recently Deleted and Apple keeps it for 30 days, so an `icloud`
 delete is recoverable for a month and an `everywhere` delete is recoverable for
-a month minus the local file.
+a month minus the local file. A `drive` delete is not recoverable from Apple at
+all -- it never touches iCloud -- but the photo it leaves behind is still there.
 """
 
 from __future__ import annotations
@@ -32,7 +37,14 @@ from icloud_photo_metadata.icloud_source import DeleteFailed
 from icloud_photo_metadata.icloud_source import delete_asset
 from icloud_photo_metadata.icloud_source import fetch_asset
 from icloud_photo_metadata.library import BackedUpFile
+from icloud_photo_metadata.queries import DRIVE
 from icloud_photo_metadata.queries import EVERYWHERE
+
+
+# Which copies each mark takes. Every deletion below asks one of these rather
+# than naming a mark, so the third one did not need a branch of its own.
+_TAKES_ICLOUD = (queries.ICLOUD, EVERYWHERE)
+_TAKES_DRIVE = (DRIVE, EVERYWHERE)
 
 
 @dataclass(frozen=True)
@@ -73,13 +85,15 @@ class PrunePlan:
 
     @property
     def icloud_bytes(self) -> int:
-        """What iCloud gets back."""
-        return sum(target.icloud_bytes for target in self.ready if target.in_icloud)
+        """What iCloud gets back, from the marks that name it."""
+        return sum(
+            target.icloud_bytes for target in self.ready if target.in_icloud and target.mark in _TAKES_ICLOUD
+        )
 
     @property
     def drive_bytes(self) -> int:
-        """What the drive gets back, which only `everywhere` frees."""
-        return sum(target.drive_bytes for target in self.ready if target.mark == EVERYWHERE)
+        """What the drive gets back, which the two marks that name it free."""
+        return sum(target.drive_bytes for target in self.ready if target.mark in _TAKES_DRIVE)
 
 
 @dataclass(frozen=True)
@@ -101,7 +115,7 @@ def build_plan(conn: sqlite3.Connection, directory: Path, *, mark: str | None = 
     between trusting the library's bookkeeping and trusting the bytes.
 
     Args:
-        mark: Restrict to one level of `queries.MARKS`. The default plans both.
+        mark: Restrict to one of `queries.MARKS`. The default plans them all.
     """
     held = library.backed_up(conn)
     ready: list[Target] = []
@@ -130,6 +144,12 @@ def _refusal(target: Target, directory: Path) -> str | None:
     if not target.in_icloud and not target.files:
         return "already gone from iCloud and not on the drive"
     if target.mark == EVERYWHERE:
+        return None
+    if target.mark == DRIVE:
+        if not target.files:
+            return "nothing on the drive to delete"
+        if not target.in_icloud:
+            return "already gone from iCloud: the drive holds the only copy"
         return None
     if not target.in_icloud:
         return "already gone from iCloud"
@@ -166,12 +186,12 @@ def apply_plan(plan: PrunePlan, directory: Path, conn: sqlite3.Connection, *, ap
 
     for target in plan.ready:
         try:
-            if target.in_icloud:
+            if target.in_icloud and target.mark in _TAKES_ICLOUD:
                 delete_asset(fetch_asset(api, target.asset_id, target.source_album))
                 library.record_gone(conn, target.asset_id)
                 freed_icloud.append(target.asset_id)
                 icloud_bytes += target.icloud_bytes
-            if target.mark == EVERYWHERE and target.files:
+            if target.mark in _TAKES_DRIVE and target.files:
                 _remove_from_drive(conn, target, directory)
                 freed_drive.append(target.asset_id)
                 drive_bytes += target.drive_bytes

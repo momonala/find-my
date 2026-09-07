@@ -10,6 +10,7 @@ and fails with 503 rather than 500 when the drive is not mounted.
 
 from __future__ import annotations
 
+import mimetypes
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -32,6 +33,7 @@ from src.web.photos.schemas import parse_mark_payload
 from src.web.photos.schemas import parse_prune_payload
 from src.web.photos.sync import refresh
 from src.web.photos.thumbnails import SIZES
+from src.web.photos.thumbnails import VIDEO_SUFFIXES
 from src.web.photos.thumbnails import UnrenderableAsset
 from src.web.photos.thumbnails import thumbnail
 
@@ -69,7 +71,16 @@ def list_assets() -> ResponseReturnValue:
     offset = max(request.args.get("offset", default=0, type=int), 0)
     with _reading() as conn:
         page = queries.search(conn, filters, limit=limit, offset=offset)
-    return jsonify({"assets": page.rows, "total": page.total, "next_offset": page.next_offset})
+    for row in page.rows:
+        row["playable"] = _playable(row)
+    return jsonify(
+        {
+            "assets": page.rows,
+            "total": page.total,
+            "total_bytes": page.total_bytes,
+            "next_offset": page.next_offset,
+        }
+    )
 
 
 @bp.get("/facets")
@@ -85,6 +96,7 @@ def get_asset(asset_id: str) -> ResponseReturnValue:
         asset = queries.get_asset(conn, asset_id)
     if asset is None:
         abort(404, description=f"No asset {asset_id}.")
+    asset["playable"] = _playable(asset)
     return jsonify(asset)
 
 
@@ -153,8 +165,8 @@ def post_prune() -> ResponseReturnValue:
 def get_image(asset_id: str) -> ResponseReturnValue:
     """A browser-renderable JPEG of the asset, at `size=grid` or `size=detail`.
 
-    Videos have no still to serve: the client shows its own placeholder rather
-    than this route inventing one.
+    A movie is served the poster frame ffmpeg takes from it, so every asset
+    the drive holds bytes for has a picture here.
     """
     size = request.args.get("size", default="grid")
     if size not in SIZES:
@@ -176,6 +188,44 @@ def get_image(asset_id: str) -> ResponseReturnValue:
     response = send_file(rendered, mimetype="image/jpeg", max_age=31536000)
     response.headers["Cache-Control"] += ", immutable"
     return response
+
+
+@bp.get("/assets/<asset_id>/video")
+def get_video(asset_id: str) -> ResponseReturnValue:
+    """The movie's own bytes, straight off the drive, for a `<video>` to play.
+
+    Unlike the image route this converts nothing: a .MOV off an iPhone is
+    H.264 or HEVC in a container every current browser plays, and re-encoding
+    a 200 MB clip on request is not something a page can wait for. `conditional`
+    is what makes Range work, and without Range Safari will not play at all.
+    """
+    with _reading() as conn:
+        asset = queries.get_asset(conn, asset_id)
+    if asset is None:
+        abort(404, description=f"No asset {asset_id}.")
+    if not _playable(asset):
+        abort(415, description=f"{asset['filename']} is not a movie this can play.")
+    if asset["relative_path"] is None:
+        abort(404, description=f"No backed-up original for {asset_id}.")
+
+    original = _safe_original(asset["relative_path"])
+    if not original.exists():
+        abort(404, description="The library claims a file the drive does not have.")
+    mimetype = mimetypes.guess_type(original.name)[0] or "application/octet-stream"
+    # Same immutability as a thumbnail: a backed-up original never changes.
+    response = send_file(original, mimetype=mimetype, conditional=True, max_age=31536000)
+    response.headers["Cache-Control"] += ", immutable"
+    return response
+
+
+def _playable(asset: dict[str, object]) -> bool:
+    """Whether this asset is a movie a `<video>` can be pointed at.
+
+    Suffix, not `item_type`: Apple files animated GIF, WEBP and AVIF as movies
+    too, and those are stills as far as the browser and the image route are
+    concerned. Says nothing about whether the bytes are on the drive.
+    """
+    return Path(str(asset["filename"])).suffix.lower() in VIDEO_SUFFIXES
 
 
 def _safe_original(relative_path: str) -> Path:

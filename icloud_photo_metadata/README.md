@@ -84,7 +84,7 @@ One SQLite database, sitting on the drive next to the media it describes. 53.5 M
 | `assets` | One row per asset iCloud has ever shown us, with `in_icloud` saying whether it still does |
 | `asset_resources` | Per-variant size, dimensions and Apple checksum: original, medium, thumb, video halves |
 | `files` | Asset id and kind, mapped to a path on the drive, its size and its sha256 |
-| `marks` | What you flagged for deletion, at which level, and when `prune` carried it out |
+| `marks` | What you flagged for deletion, where from, and when `prune` carried it out |
 | `album_counts` | What iCloud reported for each album at the last pull, the baseline for the next one |
 | `meta` | When the last pull happened |
 
@@ -218,8 +218,8 @@ drive holds and what you decided about it exist nowhere else.
 
 So there is no framework, just `_MIGRATIONS` in `library.py` -- one SQL block per version step, run inside
 the caller's transaction. `PRAGMA user_version` still refuses a library from a version this one cannot
-reach. The one step so far is v1 to v2, which split `marks` from a single `delete` into the two levels
-below and added `executed_at`.
+reach. v1 to v2 split `marks` from a single `delete` into the levels below and added `executed_at`; v2 to
+v3 widened the mark `CHECK` to admit `drive`, which SQLite can only do by rebuilding the table.
 
 **`_SCHEMA` only builds a library, it never reshapes one.** Opening one that is already at
 `SCHEMA_VERSION` runs no DDL, stamps nothing and opens no transaction. The drive is exFAT over USB, and
@@ -279,18 +279,19 @@ EXIF blob that pyicloud never decodes. Any patch release could move all of it. T
 
 `/photos` in the web UI is a thumbnail grid you can filter by camera, year, album, kind, size, video
 length, favourite, location, and whether an asset is still in iCloud or backed up at all. Clicking a
-thumbnail opens its EXIF, and marks it for deletion at one of two levels.
+thumbnail opens its EXIF, and marks it for deletion from either place its bytes sit, or from both.
 
 The page lives in `src/web/photos/` and its queries in `queries.py`. Both need the drive mounted, and the
 routes answer 503 when it is not, because an unplugged USB disk is a state to explain rather than a server
 error.
 
-**A mark says where the bytes should stop existing.** `iCloud` frees the iCloud copy and leaves the
-drive's, which is the whole point of keeping a backup. `Everywhere` takes the drive's copy too, and is the
-only thing in this tool that lets go of the last copy of a photo. Pressing the level an asset already
-carries clears it; "not marked" has no button because it is not a decision worth recording.
+**A mark says where the bytes should stop existing.** The detail panel offers the two places a copy sits
+-- iCloud and this drive -- and each toggles on its own, so every combination is a mark: `icloud` frees the
+iCloud copy and keeps the drive's, which is the whole point of having a backup; `drive` is its mirror; and
+`everywhere` is both, the only thing in this tool that lets go of the last copy of a photo. Neither place
+selected is no mark at all, which is why "not marked" has no button of its own.
 
-**The filter bar can show what you marked**, either level or both, which is the question worth asking
+**The filter bar can show what you marked**, by location or all of it, which is the question worth asking
 before pruning.
 
 **Marking does not recount the library.** The mark route answers with nothing but the mark. Totals mean a
@@ -299,17 +300,21 @@ scan of all 9,711 assets, which is 18 ms with the drive's pages cached and was m
 changed.
 
 **Nothing is deleted until a prune runs**, from the gallery's button or from `prune --yes`. Both build the
-same plan and both refuse the same things. An `iCloud` mark is skipped unless the drive holds every file
-the library recorded for that asset, at the recorded size, hashing to the recorded digest -- a skipped
-asset stays marked, so fixing the reason and re-running picks it up. `Everywhere` is not gated at all:
-discarding the backup is the request.
+same plan and both refuse the same things, and what each gate checks is the copy that survives it. An
+`iCloud` mark is skipped unless the drive holds every file the library recorded for that asset, at the
+recorded size, hashing to the recorded digest. A `drive` mark is skipped unless iCloud still holds the
+photo, but nothing is hashed: Apple's copy is not ours to verify. A skipped asset stays marked, so fixing
+the reason and re-running picks it up. `Everywhere` is not gated at all: discarding the last copy is the
+request.
 
 **A deleted asset goes to Recently Deleted**, where Apple keeps it for 30 days. The prune sets `isDeleted`,
 which is exactly what the Photos app's delete does. So an `iCloud` prune is recoverable for a month, and an
-`everywhere` prune is recoverable for a month minus the drive's copy, which is gone for good.
+`everywhere` prune is recoverable for a month minus the drive's copy, which is gone for good. A `drive`
+prune never touches Apple, so nothing of it is recoverable -- but the photo it leaves in iCloud is whole.
 
 **A pruned asset keeps its row.** `in_icloud` goes to 0 the moment the delete lands rather than at the next
-pull, and an `everywhere` prune drops the `files` rows with the files. The metadata outlives both copies,
+pull, and a prune that takes the drive's copy drops the `files` rows with the files. The metadata outlives
+both copies,
 which is the point of the library being on the drive.
 
 **The gallery's prune runs on a background thread**, the same way the refresh does: each asset costs a
@@ -325,8 +330,23 @@ the next page rebuilds it. The drive itself still holds nothing but originals.
 plists off USB to draw a grid costs a page a second. The grid reads named columns only; camera and
 exposure load one asset at a time when you open the detail panel.
 
-**Videos show a placeholder.** A movie has no still on the drive to render, and making one means decoding
-video, which is the ffmpeg dependency this tool deliberately does without.
+**A movie's tile is a frame taken from it** with whatever `ffmpeg` is on `PATH`, cached like any other
+thumbnail. There is no Python video dependency and nothing to install: without ffmpeg a movie simply has
+no tile, which is what every movie showed before.
+
+**Movies play in the detail panel**, straight from the drive's own bytes -- `GET
+/api/photos/assets/<id>/video` serves the original with range requests, which is what lets a player seek
+and what Safari needs before it will start at all. Nothing is transcoded: re-encoding a 200 MB clip is not
+a wait a page can hold. A recent iPhone's `.MOV` is HEVC, so a browser that cannot decode it says so in
+the panel rather than showing an empty frame.
+
+**Every tile carries a photo or a play icon.** Playability is decided by suffix rather than by
+`item_type`, because Apple files animated GIF, WEBP and AVIF as movies and those are stills as far as a
+browser is concerned -- they get the photo icon and the image route, like any other still.
+
+**A tile with no picture says why.** `Hidden in iCloud` for the album this tool excludes on purpose,
+`In the trash` for Recently Deleted, `Gone` for something iCloud no longer holds, and `Not backed up` only
+for an asset that really is a gap in the backup.
 
 ## Limitations
 
@@ -335,7 +355,8 @@ video, which is the ffmpeg dependency this tool deliberately does without.
 - **HEIC is stored as-is.** 7,300 files. Converting would break both the hash and the "original bytes"
   promise, so finding a decoder in 2040 is your problem.
 - **Hidden is never backed up**, so those 92 assets and 2.5 GB cannot be marked `iCloud`: there is no
-  copy to fall back on, and the prune refuses them. `Everywhere` will still delete them.
+  copy to fall back on, and the prune refuses them. `Drive` has nothing to delete for them either.
+  `Everywhere` will still delete them.
 - **There are no tags.** `keywords`, `people`, `title` and `description` come back empty for all 9,711
   assets. Apple's CloudKit does not expose library tags or face data here. This is not a decoding bug: the
   same path produces 6,184 GPS fixes.

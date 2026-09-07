@@ -13,7 +13,6 @@ import { formatBytes, formatDate } from "/static/format.js";
 import { fetchJson } from "/static/http.js";
 
 const PAGE_SIZE = 120;
-const SEARCH_DEBOUNCE_MS = 250;
 // Enough to fill the view at any density, so a query never looks like it
 // returned a short page while it is still running.
 const SKELETON_ROWS = 4;
@@ -29,14 +28,33 @@ const loadMore = document.getElementById("load-more");
 const perRow = document.getElementById("per-row");
 const gridEmpty = document.getElementById("grid-empty");
 const detail = document.getElementById("detail");
+const kindBadges = {
+  movie: document.getElementById("kind-badge-movie"),
+  image: document.getElementById("kind-badge-image"),
+};
+const stateBadges = {
+  icloud: {
+    on: document.getElementById("state-badge-icloud-on"),
+    off: document.getElementById("state-badge-icloud-off"),
+  },
+  local: {
+    on: document.getElementById("state-badge-local-on"),
+    off: document.getElementById("state-badge-local-off"),
+  },
+};
 const refreshButton = document.getElementById("refresh");
 const pruneButton = document.getElementById("prune");
 const pruneConfirm = document.getElementById("prune-confirm");
 const markButtons = [...document.querySelectorAll(".detail-mark")];
 
-// What the two levels of mark mean, in the order the confirmation lists them.
+// The stored marks in the words the buttons use, for the facts row that shows
+// one back.
+const MARK_NAMES = { icloud: "iCloud", drive: "Local", everywhere: "Local + iCloud" };
+
+// What each mark means, in the order the confirmation lists them.
 const MARK_LINES = [
   ["marked_icloud", "from iCloud, keeping the copy on this drive"],
+  ["marked_drive", "from this drive, keeping the copy in iCloud"],
   ["marked_everywhere", "from iCloud and from this drive"],
 ];
 
@@ -53,6 +71,11 @@ function formatDuration(seconds) {
 // Flags are buttons rather than form fields because each is tri-state: unset
 // means "not filtered", which is not the same as filtering on false. Their
 // `aria-pressed` is the only record of that, read back here.
+// `sort` orders the library rather than narrowing it, so it does not count.
+function isNarrowed() {
+  return [...currentQuery().keys()].some((key) => key !== "sort");
+}
+
 function currentQuery() {
   const params = new URLSearchParams();
   for (const [key, value] of new FormData(form)) {
@@ -75,6 +98,10 @@ function canRender(asset) {
 function missingLabel(asset) {
   if (asset.source_album === "Recently Deleted") return "In the trash";
   if (!asset.in_icloud) return "Gone";
+  // Hidden is excluded from the backup on purpose -- `backup.EXCLUDED_ALBUMS`
+  // -- so "not backed up" would read as a gap to go and fix rather than the
+  // rule it is. Applies to the album's videos exactly as to its photos.
+  if (asset.source_album === "Hidden") return "Hidden in iCloud";
   return "Not backed up";
 }
 
@@ -107,6 +134,31 @@ function thumbnail(asset) {
   return frame;
 }
 
+// Which of the two kind icons a tile carries. `playable` rather than
+// `item_type`, so an animated GIF -- which Apple files as a movie and this
+// shows as a still -- is not badged as something you can press play on.
+function kindBadge(asset) {
+  return kindBadges[asset.playable ? "movie" : "image"].content.cloneNode(true);
+}
+
+function stateBadge(copy, present) {
+  return stateBadges[copy][present ? "on" : "off"].content.cloneNode(true);
+}
+
+// The tile's corner: what this is, then where its bytes are. `relative_path`
+// is the drive's copy -- the same field the thumbnail is drawn from, so the
+// house never claims a file the grid could not show.
+function badges(asset) {
+  const row = document.createElement("span");
+  row.className = "photo-badges";
+  row.append(
+    kindBadge(asset),
+    stateBadge("icloud", Boolean(asset.in_icloud)),
+    stateBadge("local", Boolean(asset.relative_path)),
+  );
+  return row;
+}
+
 function placeholder(text) {
   const span = document.createElement("span");
   span.className = "photo-placeholder";
@@ -135,7 +187,9 @@ function card(asset) {
   button.type = "button";
   button.className = "photo-button";
 
-  button.append(canRender(asset) ? thumbnail(asset) : placeholder(missingLabel(asset)));
+  const frame = canRender(asset) ? thumbnail(asset) : placeholder(missingLabel(asset));
+  frame.append(badges(asset));
+  button.append(frame);
 
   const caption = document.createElement("span");
   caption.className = "photo-caption";
@@ -160,7 +214,10 @@ function startLoading(append) {
     loadMore.disabled = true;
     return;
   }
-  resultCount.textContent = "Loading…";
+  // Only where the figure itself would land: unfiltered there is no figure, so
+  // a placeholder for it would flash a line that is about to be empty.
+  resultCount.hidden = !isNarrowed();
+  resultCount.replaceChildren("Loading…");
   const tiles = Math.min(Number(perRow.value) * SKELETON_ROWS, PAGE_SIZE);
   grid.replaceChildren(...Array.from({ length: tiles }, skeletonCard));
 }
@@ -192,10 +249,14 @@ async function loadPage({ append = false } = {}) {
     nextOffset = page.next_offset;
     loadMore.hidden = nextOffset === null;
     gridEmpty.hidden = page.total > 0;
-    resultCount.textContent = `${page.total.toLocaleString()} matching`;
+    // The size of everything that matched, not of the page on screen, so the
+    // number answers "how much would pruning this filter free?". Nothing to
+    // say when no filter narrows anything: the library's own totals, sitting
+    // beside this, already are the answer.
+    showMatching(page);
   } catch (error) {
     if (error.name === "AbortError") return; // a newer query owns the grid now
-    resultCount.textContent = "";
+    resultCount.hidden = true;
     showError(error.message);
   } finally {
     if (inFlight === request) {
@@ -241,7 +302,7 @@ const LABELS = {
   original_bytes: "Original size",
   icloud_bytes: "iCloud storage used",
   asset_date: "Taken",
-  mark: "Marked",
+  mark: "Marked to delete from",
   hdr_type: "HDR type",
   time_zone_offset_seconds: "Time zone offset",
 };
@@ -282,6 +343,7 @@ function formatValue(key, value) {
   if (MOMENT_KEYS.has(key)) return formatMoment(value);
   if (key === "duration_seconds") return formatDuration(value);
   if (key === "time_zone_offset_seconds") return formatOffset(value);
+  if (key === "mark") return MARK_NAMES[value] ?? value;
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
@@ -358,22 +420,52 @@ function renderMeta(asset) {
 function showDetailImage(asset) {
   const image = document.getElementById("detail-image");
   const figure = image.closest(".detail-figure");
+  const showImage = canRender(asset) && !asset.playable;
   image.classList.remove("is-loaded");
-  image.hidden = !canRender(asset);
+  image.hidden = !showImage;
   image.alt = asset.filename;
-  figure.classList.toggle("is-pending", canRender(asset));
+  figure.classList.toggle("is-pending", showImage);
   image.addEventListener("load", () => {
     figure.classList.remove("is-pending");
     image.classList.add("is-loaded");
   }, { once: true });
   image.addEventListener("error", () => figure.classList.remove("is-pending"), { once: true });
-  image.src = canRender(asset) ? `/api/photos/assets/${encodeURIComponent(asset.id)}/image?size=detail` : "";
+  image.src = showImage ? `/api/photos/assets/${encodeURIComponent(asset.id)}/image?size=detail` : "";
+}
+
+// A movie plays from its own bytes on the drive -- no conversion, so nothing to
+// wait for beyond the disk -- with the tile's poster frame standing in until
+// the browser has decoded enough to show one of its own.
+function showDetailVideo(asset) {
+  const video = document.getElementById("detail-video");
+  const failed = document.getElementById("detail-video-error");
+  const playing = canRender(asset) && Boolean(asset.playable);
+  // Pausing and clearing first: without it the previous clip keeps playing
+  // while the next one loads, and the browser keeps requesting its bytes.
+  video.pause();
+  video.hidden = !playing;
+  video.removeAttribute("src");
+  video.removeAttribute("poster");
+  failed.hidden = true;
+  if (!playing) {
+    video.load();
+    return;
+  }
+  video.addEventListener("error", () => {
+    video.hidden = true;
+    failed.hidden = false;
+  }, { once: true });
+  const assetUrl = `/api/photos/assets/${encodeURIComponent(asset.id)}`;
+  video.poster = `${assetUrl}/image?size=detail`;
+  video.src = `${assetUrl}/video`;
+  video.load();
 }
 
 async function openDetail(assetId) {
   try {
     const asset = await fetchJson(`/api/photos/assets/${encodeURIComponent(assetId)}`);
     showDetailImage(asset);
+    showDetailVideo(asset);
     document.getElementById("detail-title").textContent = asset.filename;
     renderMeta(asset);
 
@@ -385,19 +477,38 @@ async function openDetail(assetId) {
   }
 }
 
-// Which of the two levels this asset carries, if any. The id rides on the
-// group so a button only has to know its own level.
+// Which places each stored mark deletes from. The buttons toggle places and
+// this is the only thing that knows which mark a pair of places is.
+const MARK_TARGETS = { icloud: ["icloud"], drive: ["drive"], everywhere: ["icloud", "drive"] };
+
+// The id rides on the group so a button only has to know its own target.
 function showMarks(assetId, mark) {
-  markButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.mark === mark)));
+  const on = MARK_TARGETS[mark] ?? [];
+  markButtons.forEach((button) => button.setAttribute("aria-pressed", String(on.includes(button.dataset.target))));
   document.querySelector(".detail-marks").dataset.id = assetId;
 }
 
-// Pressing the level an asset already carries clears it: the third state has
-// no button of its own because "not marked" is not a decision to record.
+// Each button toggles its own place, and every combination of the two is a
+// mark the library stores -- neither place off is no mark at all.
+function nextMark(pressed, target) {
+  const wanted = new Set(pressed);
+  if (wanted.has(target)) wanted.delete(target);
+  else wanted.add(target);
+  return Object.keys(MARK_TARGETS).find((mark) => sameTargets(MARK_TARGETS[mark], [...wanted])) ?? null;
+}
+
+function sameTargets(a, b) {
+  return a.length === b.length && a.every((target) => b.includes(target));
+}
+
 async function setMark(button) {
   const assetId = document.querySelector(".detail-marks").dataset.id;
-  const was = markButtons.find((item) => item.getAttribute("aria-pressed") === "true")?.dataset.mark ?? null;
-  const mark = was === button.dataset.mark ? null : button.dataset.mark;
+  const pressed = markButtons
+    .filter((item) => item.getAttribute("aria-pressed") === "true")
+    .map((item) => item.dataset.target);
+  const was = Object.keys(MARK_TARGETS).find((mark) => sameTargets(MARK_TARGETS[mark], pressed)) ?? null;
+  const mark = nextMark(pressed, button.dataset.target);
+  if (mark === was) return;
   markButtons.forEach((item) => { item.disabled = true; });
   try {
     await fetchJson(`/api/photos/assets/${encodeURIComponent(assetId)}/mark`, {
@@ -437,14 +548,35 @@ function countMark(was, now) {
 // whole library off a USB disk.
 let lastTotals = { marked: 0 };
 
-// Size first, then only the counts that are actually saying something: a zero
-// here is the normal state and does not need a column of its own.
+// One group of the counts line: the number loud, what it counts quiet. Built
+// as elements rather than a string so the number can carry its own weight.
+function countGroup(value, label, bytes) {
+  const group = document.createElement("span");
+  group.className = "photos-count";
+  const number = document.createElement("strong");
+  number.textContent = value.toLocaleString();
+  group.append(number, ` ${label}`);
+  if (bytes) group.append(` · ${formatBytes(bytes)}`);
+  return group;
+}
+
+// The filtered figure, shown only while a filter is narrowing the library:
+// unfiltered, "9,716 matching" only repeats the total sitting beside it.
+function showMatching(page) {
+  resultCount.hidden = !isNarrowed();
+  resultCount.replaceChildren(countGroup(page.total, "matching", page.total_bytes));
+}
+
+// The library, then where its bytes are -- iCloud's copy and the drive's are
+// counted apart because an asset can be in one, the other, or both, and which
+// is what pruning turns on. Only the counts actually saying something show: a
+// zero is the normal state and does not need a column of its own.
 function showTotals(totals) {
-  const parts = [`${totals.assets.toLocaleString()} assets`, formatBytes(totals.bytes)];
-  const freed = totals.assets - totals.in_icloud;
-  if (freed) parts.push(`${freed.toLocaleString()} only on this drive`);
-  if (totals.marked) parts.push(`${totals.marked.toLocaleString()} marked to delete`);
-  librarySummary.textContent = parts.join(" · ");
+  const groups = [countGroup(totals.assets, "assets", totals.bytes)];
+  if (totals.in_icloud) groups.push(countGroup(totals.in_icloud, "in iCloud", totals.in_icloud_bytes));
+  if (totals.on_disk) groups.push(countGroup(totals.on_disk, "on this drive", totals.on_disk_bytes));
+  if (totals.marked) groups.push(countGroup(totals.marked, "marked to delete", totals.marked_bytes));
+  librarySummary.replaceChildren(...groups);
   // Ships hidden so an empty line does not sit above the grid while the
   // first totals are still being counted off the drive.
   librarySummary.hidden = false;
@@ -571,7 +703,7 @@ async function start() {
     await loadFacets();
   } catch (error) {
     stopLoading();
-    resultCount.textContent = "";
+    resultCount.hidden = true;
     showFatalError(`${error.message} Is the backup drive mounted?`);
     return;
   }
@@ -580,17 +712,11 @@ async function start() {
   pruneJob.poll();
 }
 
-// Typing fires an input event per character, and each page costs a filtered
-// count plus 120 image requests. Selects stay immediate: they change once.
-let typingTimer = null;
+// Every filter is a select, so each event is one deliberate change and a page
+// per event is what the reader asked for -- nothing here needs debouncing.
 form.addEventListener("input", (event) => {
   if (event.target === perRow) return; // a view setting, not a filter
-  if (event.target.type !== "search") {
-    loadPage();
-    return;
-  }
-  clearTimeout(typingTimer);
-  typingTimer = setTimeout(() => loadPage(), SEARCH_DEBOUNCE_MS);
+  loadPage();
 });
 form.addEventListener("submit", (event) => event.preventDefault());
 
@@ -611,6 +737,14 @@ document.getElementById("prune-go").addEventListener("click", () => {
 });
 loadMore.addEventListener("click", () => loadPage({ append: true }));
 document.getElementById("detail-close").addEventListener("click", () => detail.close());
+// Escape closes a dialog without going through the button, and a clip left
+// playing behind a closed dialog is heard and not seen.
+detail.addEventListener("close", () => {
+  const video = document.getElementById("detail-video");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+});
 for (const button of markButtons) {
   button.addEventListener("click", (event) => setMark(event.currentTarget));
 }

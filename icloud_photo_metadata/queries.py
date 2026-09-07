@@ -52,14 +52,15 @@ SORTS: dict[str, str] = {
     "longest": "a.duration_seconds DESC NULLS LAST, a.id DESC",
 }
 
-# What a mark says to do with an asset's bytes. `icloud` frees the iCloud copy
-# and leaves the drive's; `everywhere` takes both and is the only one that lets
-# go of the last copy.
+# Where a mark says an asset's bytes should stop existing. `icloud` frees the
+# iCloud copy and leaves the drive's, `drive` is its mirror, and `everywhere`
+# takes both and is the only one that lets go of the last copy.
 ICLOUD = "icloud"
+DRIVE = "drive"
 EVERYWHERE = "everywhere"
-MARKS = (ICLOUD, EVERYWHERE)
+MARKS = (ICLOUD, DRIVE, EVERYWHERE)
 
-# Not a mark anything can carry: the filter value for "marked, either way",
+# Not a mark anything can carry: the filter value for "marked, any way",
 # which is the question you actually ask before pruning.
 ANY_MARK = "any"
 MARK_FILTERS = (ANY_MARK, *MARKS)
@@ -79,7 +80,6 @@ class Filters:
     gallery and a filtered one the same code path.
     """
 
-    search: str | None = None
     album: str | None = None
     item_type: str | None = None
     camera_model: str | None = None
@@ -88,7 +88,7 @@ class Filters:
     backed_up: bool | None = None
     is_favorite: bool | None = None
     has_location: bool | None = None
-    # One of `MARK_FILTERS`, so a caller can ask for either level or for both.
+    # One of `MARK_FILTERS`, so a caller can ask for one kind of mark or for any.
     mark: str | None = None
     min_bytes: int | None = None
     min_duration: float | None = None
@@ -102,6 +102,8 @@ class Page:
 
     rows: list[dict[str, Any]] = field(default_factory=list)
     total: int = 0
+    # Bytes of the originals behind every match, not just this page's rows.
+    total_bytes: int = 0
     offset: int = 0
 
     @property
@@ -120,11 +122,23 @@ def search(conn: sqlite3.Connection, filters: Filters, *, limit: int = 120, offs
         raise ValueError(f"unknown sort {filters.sort!r}; expected one of {sorted(SORTS)}")
 
     joins, where, params = _where(filters)
-    total = int(conn.execute(f"SELECT count(*) FROM assets a {joins} {where}", params).fetchone()[0])
+    # The tally needs the originals' sizes even when no filter reached into
+    # that table, so the count carries the join whether or not `joins` did.
+    tally_joins = joins if _RESOURCES in joins else f"{_RESOURCES} {joins}"
+    tally = conn.execute(
+        "SELECT count(*) AS total, coalesce(sum(r.size_bytes), 0) AS total_bytes"
+        f" FROM assets a {tally_joins} {where}",
+        params,
+    ).fetchone()
     rows = conn.execute(
         f"{_GRID_ROW} {where} ORDER BY {SORTS[filters.sort]} LIMIT ? OFFSET ?", (*params, limit, offset)
     ).fetchall()
-    return Page(rows=[dict(row) for row in rows], total=total, offset=offset)
+    return Page(
+        rows=[dict(row) for row in rows],
+        total=int(tally["total"]),
+        total_bytes=int(tally["total_bytes"]),
+        offset=offset,
+    )
 
 
 def facets(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
@@ -154,12 +168,24 @@ def facets(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
 
 
 def totals(conn: sqlite3.Connection) -> dict[str, int]:
-    """The headline numbers: how much is here, and how much is marked."""
+    """The headline numbers: where the library's bytes are, and what is marked.
+
+    iCloud's bytes are the sizes it reports for an original; the drive's are
+    what the file on it actually weighs. They are counted from different tables
+    for that reason, and an asset in both places is counted once in each. Both
+    joins are one row per asset -- each is keyed on `(asset_id, kind)` -- so
+    nothing here double-counts.
+    """
     row = conn.execute("""
         SELECT count(*) AS assets,
                coalesce(sum(a.in_icloud), 0) AS in_icloud,
-               coalesce(sum(r.size_bytes), 0) AS bytes
-        FROM assets a LEFT JOIN asset_resources r ON r.asset_id = a.id AND r.kind = 'original'
+               coalesce(sum(r.size_bytes), 0) AS bytes,
+               coalesce(sum(CASE WHEN a.in_icloud THEN r.size_bytes END), 0) AS in_icloud_bytes,
+               count(f.relative_path) AS on_disk,
+               coalesce(sum(f.size_bytes), 0) AS on_disk_bytes
+        FROM assets a
+        LEFT JOIN asset_resources r ON r.asset_id = a.id AND r.kind = 'original'
+        LEFT JOIN files f ON f.asset_id = a.id AND f.kind = 'original'
         """).fetchone()
     # Pending marks only: an executed one is history, not a to-do list.
     marked = conn.execute("""
@@ -173,6 +199,9 @@ def totals(conn: sqlite3.Connection) -> dict[str, int]:
     return {
         "assets": row["assets"],
         "in_icloud": row["in_icloud"],
+        "in_icloud_bytes": row["in_icloud_bytes"],
+        "on_disk": row["on_disk"],
+        "on_disk_bytes": row["on_disk_bytes"],
         "bytes": row["bytes"],
         "marked": sum(item["n"] for item in marked),
         "marked_bytes": sum(item["bytes"] for item in marked),
@@ -246,7 +275,7 @@ def pending_marks(conn: sqlite3.Connection, mark: str | None = None) -> list[dic
     """Every mark still waiting to be carried out, oldest decision first.
 
     Args:
-        mark: Restrict to one of `MARKS`. The default returns both levels.
+        mark: Restrict to one of `MARKS`. The default returns every kind.
     """
     where = "AND m.mark = ?" if mark is not None else ""
     rows = conn.execute(
@@ -290,8 +319,6 @@ def _where(filters: Filters) -> tuple[str, str, list[Any]]:
         if join:
             joins.add(join)
 
-    if filters.search:
-        add("a.filename LIKE ?", f"%{filters.search}%")
     if filters.album:
         add("a.source_album = ?", filters.album)
     else:

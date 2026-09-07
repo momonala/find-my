@@ -28,7 +28,7 @@ from icloud_photo_metadata.models import StoredResource
 
 LIBRARY_NAME = "library.db"
 DUMP_NAME = LIBRARY_NAME + ".dump"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # A Live Photo has both. The still leads, because it is the asset.
 ORIGINAL = "original"
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE TABLE IF NOT EXISTS marks (
     asset_id    TEXT PRIMARY KEY REFERENCES assets(id),
-    mark        TEXT NOT NULL CHECK (mark IN ('icloud', 'everywhere')),
+    mark        TEXT NOT NULL CHECK (mark IN ('icloud', 'drive', 'everywhere')),
     marked_at   TEXT NOT NULL,
     executed_at TEXT
 );
@@ -292,6 +292,21 @@ _MIGRATIONS: dict[int, str] = {
         SELECT asset_id, 'icloud', marked_at FROM marks WHERE mark = 'delete';
     DROP TABLE marks;
     ALTER TABLE marks_v2 RENAME TO marks;
+    """,
+    # v3 adds 'drive': delete the drive's copy and keep iCloud's, the mirror of
+    # 'icloud'. A CHECK cannot be widened in place, so the table is rebuilt and
+    # every existing mark carried over unchanged.
+    2: """
+    CREATE TABLE marks_v3 (
+        asset_id    TEXT PRIMARY KEY REFERENCES assets(id),
+        mark        TEXT NOT NULL CHECK (mark IN ('icloud', 'drive', 'everywhere')),
+        marked_at   TEXT NOT NULL,
+        executed_at TEXT
+    );
+    INSERT INTO marks_v3 (asset_id, mark, marked_at, executed_at)
+        SELECT asset_id, mark, marked_at, executed_at FROM marks;
+    DROP TABLE marks;
+    ALTER TABLE marks_v3 RENAME TO marks;
     """,
 }
 
