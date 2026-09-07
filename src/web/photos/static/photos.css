@@ -81,9 +81,16 @@
 
 /* Everything else comes from the shell's .card-grid. The column count is the
    reader's choice and gets set inline; this is what shows until then. */
+/* A <ul>, so it carries a list's own margin, padding and markers until told
+   otherwise. `grid-template-columns` is a fallback: the density select writes
+   its own inline, and this is what the grid falls back to before it runs. */
 .photo-grid {
+  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
   gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .photo-card {

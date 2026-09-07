@@ -10,11 +10,13 @@ provisioned session -- so the assertions are about when a new one is built and
 that the old one becomes unreachable.
 """
 
+import json
 import os
 import sqlite3
 import stat
 from datetime import UTC
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -299,3 +301,78 @@ def test_dropped_provider_is_not_referenced_elsewhere(monkeypatch):
     gc.collect()
 
     assert witness() is None
+
+
+# --------------------------------------------- The device identity Apple issues ----
+
+
+class _IdentityProvider:
+    """A LocalAnisetteProvider that only has to carry, save and restore an identity.
+
+    `prov_data` is the identity: None until Apple has provisioned one, which is
+    the distinction every test below turns on.
+    """
+
+    def __init__(self, prov_data: str | None = None, *, libs_path: Path | None = None) -> None:
+        self.prov_data = prov_data
+        self.libs_path = libs_path
+
+    @classmethod
+    def from_json(cls, _val, *, libs_path: Path | None = None) -> "_IdentityProvider":
+        return cls("restored", libs_path=libs_path)
+
+    def to_json(self, dst=None):
+        payload = {"type": "aniLocal", "prov_data": self.prov_data}
+        if dst is not None:
+            Path(dst).write_text(json.dumps(payload))
+        return payload
+
+
+@pytest.fixture
+def identity(monkeypatch, tmp_path: Path) -> Path:
+    """Point the identity file at a scratch path, with a provider that only serialises."""
+    state = tmp_path / "anisette_state.json"
+    monkeypatch.setattr(airtags, "_ANISETTE_STATE", state)
+    monkeypatch.setattr(airtags, "LocalAnisetteProvider", _IdentityProvider)
+    return state
+
+
+def test_a_provisioned_identity_is_saved_for_the_next_attempt(identity: Path) -> None:
+    """A login that fails after this point must not cost another identity."""
+    airtags._save_anisette_identity(_IdentityProvider("issued-by-apple"))
+
+    assert json.loads(identity.read_text())["prov_data"] == "issued-by-apple"
+    # It is the device Apple knows us by, so it is nobody else's to read.
+    assert identity.stat().st_mode & 0o077 == 0
+
+
+def test_an_identity_that_does_not_exist_yet_is_not_written(identity: Path) -> None:
+    """A file of nulls would look like a saved identity and suppress the real one."""
+    airtags._save_anisette_identity(_IdentityProvider(None))
+
+    assert not identity.exists()
+
+
+def test_a_saved_identity_is_reused_rather_than_provisioned_again(identity: Path) -> None:
+    """Provisioning on every retry is what gets the account throttled."""
+    identity.write_text(json.dumps({"type": "aniLocal", "prov_data": "issued-by-apple"}))
+
+    assert airtags._login_anisette().prov_data == "restored"
+
+
+def test_no_saved_identity_means_a_fresh_one(identity: Path) -> None:
+    assert airtags._login_anisette().prov_data is None
+
+
+def test_an_unreadable_identity_falls_back_to_provisioning(
+    identity: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Provisioning again is the fallback, so a bad file must not fail the login."""
+    identity.write_text("{ this is not json")
+
+    def _unreadable(*_args, **_kwargs):
+        raise ValueError("bad state")
+
+    monkeypatch.setattr(airtags.LocalAnisetteProvider, "from_json", _unreadable)
+
+    assert airtags._login_anisette().prov_data is None

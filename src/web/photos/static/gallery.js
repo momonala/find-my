@@ -445,6 +445,9 @@ function showTotals(totals) {
   if (freed) parts.push(`${freed.toLocaleString()} only on this drive`);
   if (totals.marked) parts.push(`${totals.marked.toLocaleString()} marked to delete`);
   librarySummary.textContent = parts.join(" · ");
+  // Ships hidden so an empty line does not sit above the grid while the
+  // first totals are still being counted off the drive.
+  librarySummary.hidden = false;
   lastTotals = totals;
   pruneButton.hidden = !totals.marked;
   pruneButton.textContent = `Delete ${totals.marked.toLocaleString()}`;

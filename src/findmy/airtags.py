@@ -54,6 +54,9 @@ logger = logging.getLogger(__name__)
 
 _ACCOUNT_FILE = SESSION_DIR / "findmy_account.json"
 _ANISETTE_LIBS = SESSION_DIR / "ani_libs.bin"
+# The virtual device identity Apple's provisioning service issued us. Kept apart
+# from `_ACCOUNT_FILE` because it outlives a failed login: see `_login_anisette`.
+_ANISETTE_STATE = SESSION_DIR / "anisette_state.json"
 # Holds each tracker's master key in plaintext, so it stays owner-read-only and
 # inside the git-ignored session directory. Anyone with this file can locate
 # these trackers; delete it to fall back to reading the Keychain. Read-only on
@@ -223,8 +226,14 @@ def _ensure_session() -> None:
         raise UnsupportedPlatformError(_UNSUPPORTED_PLATFORM_MSG)
 
     username, password = require_credentials()
-    account = AppleAccount(LocalAnisetteProvider(libs_path=_ANISETTE_LIBS))
-    if account.login(username, password) == LoginState.REQUIRE_2FA:
+    provider = _login_anisette()
+    account = AppleAccount(provider)
+    state = account.login(username, password)
+    # Before the 2FA dance, not after: logging in is what provisions the
+    # identity, and everything after here is a step that can fail.
+    _save_anisette_identity(provider)
+
+    if state == LoginState.REQUIRE_2FA:
         if not sys.stdin.isatty():
             raise InteractiveAuthRequiredError(
                 "Apple requires a 2FA code, but there is no terminal to prompt on. "
@@ -242,6 +251,45 @@ def _ensure_session() -> None:
         method.submit(typer.prompt("Enter the 2FA code sent to your trusted device"))
 
     account.to_json(_ACCOUNT_FILE)
+
+
+def _login_anisette() -> LocalAnisetteProvider:
+    """The provider, carrying the device identity an earlier run was issued.
+
+    Every `LocalAnisetteProvider` built without saved state provisions a fresh
+    virtual device with Apple. Doing that once is the point; doing it on every
+    attempt is what gets the account throttled, and a login that fails after
+    2FA -- Apple answering the GSA call with a 503, say -- used to leave nothing
+    behind, so each retry burned another identity and made the next 503 likelier.
+
+    A state file this version cannot read is not worth failing a login over:
+    provisioning again is exactly the fallback.
+
+    Only the first login goes through here. Once `_ACCOUNT_FILE` exists the
+    identity travels inside it, and `_get_anisette_provider` is what rebuilds a
+    provider from it.
+    """
+    if _ANISETTE_STATE.exists():
+        try:
+            return LocalAnisetteProvider.from_json(_ANISETTE_STATE, libs_path=_ANISETTE_LIBS)
+        except (OSError, ValueError, KeyError, AssertionError):
+            logger.warning("Could not read %s; provisioning a new identity.", _ANISETTE_STATE.name)
+    return LocalAnisetteProvider(libs_path=_ANISETTE_LIBS)
+
+
+def _save_anisette_identity(provider: LocalAnisetteProvider) -> None:
+    """Save the identity, if there is one yet, so the next attempt reuses it.
+
+    `to_json` yields no provisioning data until the provider has actually been
+    used, which writing a file full of nulls would then hide.
+    """
+    try:
+        if provider.to_json().get("prov_data") is None:
+            return
+        provider.to_json(_ANISETTE_STATE)
+        _ANISETTE_STATE.chmod(0o600)
+    except OSError as error:
+        logger.warning("Could not save the anisette identity: %s", error)
 
 
 _event_loop: asyncio.AbstractEventLoop | None = None
