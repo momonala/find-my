@@ -3,7 +3,9 @@
 //
 // Thumbnails are <img> requests the browser makes on its own, so the first
 // view of a page is paced by the server building them and every later view is
-// served from the browser cache.
+// served from the browser cache. That first view is slow enough to need saying
+// so: the grid fills with pending tiles the moment a query goes out, and each
+// one holds its place until its own picture arrives.
 
 import { showError, clearError, showFatalError } from "/static/banners.js";
 import { formatBytes, formatDate } from "/static/format.js";
@@ -11,6 +13,12 @@ import { fetchJson } from "/static/http.js";
 
 const PAGE_SIZE = 120;
 const SEARCH_DEBOUNCE_MS = 250;
+// Enough to fill the view at any density, so a query never looks like it
+// returned a short page while it is still running.
+const SKELETON_ROWS = 4;
+// A sync runs for minutes, so the poll is paced for a progress line, not for a
+// value anyone is waiting on.
+const REFRESH_POLL_MS = 2000;
 
 const form = document.getElementById("filters");
 const grid = document.getElementById("grid");
@@ -20,8 +28,20 @@ const loadMore = document.getElementById("load-more");
 const perRow = document.getElementById("per-row");
 const gridEmpty = document.getElementById("grid-empty");
 const detail = document.getElementById("detail");
+const refreshButton = document.getElementById("refresh");
+const pruneButton = document.getElementById("prune");
+const pruneConfirm = document.getElementById("prune-confirm");
+const jobStatus = document.getElementById("job-status");
+const markButtons = [...document.querySelectorAll(".detail-mark")];
+
+// What the two levels of mark mean, in the order the confirmation lists them.
+const MARK_LINES = [
+  ["marked_icloud", "from iCloud, keeping the copy on this drive"],
+  ["marked_everywhere", "from iCloud and from this drive"],
+];
 
 let nextOffset = null;
+let inFlight = null;
 
 function formatDuration(seconds) {
   if (!seconds) return null;
@@ -38,41 +58,84 @@ function currentQuery() {
   for (const [key, value] of new FormData(form)) {
     if (value) params.set(key, value);
   }
-  for (const button of form.querySelectorAll('[data-flag][aria-pressed="true"]')) {
-    params.set(button.dataset.flag, button.dataset.value ?? "true");
-  }
   return params;
 }
 
-// A movie has no still on the drive, and an asset with no file has nothing to
-// render at all. Both get a placeholder rather than a broken image.
+// Anything the drive holds bytes for, movies included: the server takes a
+// frame from those. An asset with no file has nothing to draw at all, and one
+// the server cannot decode says so on its own tile.
 function canRender(asset) {
-  return Boolean(asset.relative_path) && asset.item_type !== "movie";
+  return Boolean(asset.relative_path);
+}
+
+// Why there is no picture, said accurately. "Not backed up" is true only of
+// something iCloud still holds -- for a photo you deleted it reads as a
+// complaint about the backup rather than the answer, which is that you
+// deleted it.
+function missingLabel(asset) {
+  if (asset.source_album === "Recently Deleted") return "In the trash";
+  if (!asset.in_icloud) return "Gone";
+  return "Not backed up";
+}
+
+// The square a picture will land in, tinted and pulsing until it does.
+function pendingFrame() {
+  const frame = document.createElement("span");
+  frame.className = "photo-frame is-pending";
+  return frame;
+}
+
+function thumbnail(asset) {
+  const frame = pendingFrame();
+  const image = document.createElement("img");
+  image.className = "photo-thumb";
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.alt = asset.filename;
+  image.addEventListener("load", () => {
+    frame.classList.remove("is-pending");
+    image.classList.add("is-loaded");
+  }, { once: true });
+  // A thumbnail the server could not build is a fact about that one asset, not
+  // a failed page, so it is said on the tile rather than in the error banner.
+  image.addEventListener("error", () => {
+    frame.classList.remove("is-pending");
+    frame.replaceChildren(placeholder("Cannot be rendered"));
+  }, { once: true });
+  image.src = `/api/photos/assets/${encodeURIComponent(asset.id)}/image?size=grid`;
+  frame.append(image);
+  return frame;
+}
+
+function placeholder(text) {
+  const span = document.createElement("span");
+  span.className = "photo-placeholder";
+  span.textContent = text;
+  return span;
+}
+
+// Holds a tile's space in the grid while the query that will fill it runs.
+function skeletonCard() {
+  const item = document.createElement("li");
+  item.className = "photo-card photo-skeleton";
+  item.setAttribute("aria-hidden", "true");
+  const caption = document.createElement("span");
+  caption.className = "photo-caption is-pending";
+  item.append(pendingFrame(), caption);
+  return item;
 }
 
 function card(asset) {
   const item = document.createElement("li");
   item.className = "photo-card";
   item.dataset.id = asset.id;
-  if (asset.mark === "delete") item.dataset.mark = "delete";
+  if (asset.mark) item.dataset.mark = asset.mark;
 
   const button = document.createElement("button");
   button.type = "button";
   button.className = "photo-button";
 
-  if (canRender(asset)) {
-    const image = document.createElement("img");
-    image.loading = "lazy";
-    image.decoding = "async";
-    image.src = `/api/photos/assets/${encodeURIComponent(asset.id)}/image?size=grid`;
-    image.alt = asset.filename;
-    button.append(image);
-  } else {
-    const placeholder = document.createElement("span");
-    placeholder.className = "photo-placeholder";
-    placeholder.textContent = asset.item_type === "movie" ? "Video" : "Not backed up";
-    button.append(placeholder);
-  }
+  button.append(canRender(asset) ? thumbnail(asset) : placeholder(missingLabel(asset)));
 
   const caption = document.createElement("span");
   caption.className = "photo-caption";
@@ -87,13 +150,41 @@ function card(asset) {
   return item;
 }
 
+// A fresh query replaces the grid with pending tiles; an appended page leaves
+// what is on screen alone and says so on the button that asked for it.
+function startLoading(append) {
+  grid.setAttribute("aria-busy", "true");
+  loadMore.hidden = true;
+  gridEmpty.hidden = true;
+  if (append) {
+    loadMore.disabled = true;
+    return;
+  }
+  resultCount.textContent = "Loading…";
+  const tiles = Math.min(Number(perRow.value) * SKELETON_ROWS, PAGE_SIZE);
+  grid.replaceChildren(...Array.from({ length: tiles }, skeletonCard));
+}
+
+function stopLoading() {
+  grid.setAttribute("aria-busy", "false");
+  loadMore.disabled = false;
+  for (const tile of grid.querySelectorAll(".photo-skeleton")) tile.remove();
+}
+
 async function loadPage({ append = false } = {}) {
   const params = currentQuery();
   params.set("limit", String(PAGE_SIZE));
   params.set("offset", String(append ? nextOffset ?? 0 : 0));
 
+  // Changing a filter while a page is still coming back abandons it: the older
+  // answer is not wanted, and letting it land would overwrite the newer one.
+  inFlight?.abort();
+  const request = new AbortController();
+  inFlight = request;
+  startLoading(append);
+
   try {
-    const page = await fetchJson(`/api/photos/assets?${params}`);
+    const page = await fetchJson(`/api/photos/assets?${params}`, { signal: request.signal });
     clearError();
     if (!append) grid.replaceChildren();
     grid.append(...page.assets.map(card));
@@ -103,7 +194,14 @@ async function loadPage({ append = false } = {}) {
     gridEmpty.hidden = page.total > 0;
     resultCount.textContent = `${page.total.toLocaleString()} matching`;
   } catch (error) {
+    if (error.name === "AbortError") return; // a newer query owns the grid now
+    resultCount.textContent = "";
     showError(error.message);
+  } finally {
+    if (inFlight === request) {
+      inFlight = null;
+      stopLoading();
+    }
   }
 }
 
@@ -255,19 +353,31 @@ function renderMeta(asset) {
   document.getElementById("detail-meta").replaceChildren(...sections);
 }
 
+// The full-size render costs another conversion, so the figure waits the same
+// way a grid tile does rather than holding the last asset's picture.
+function showDetailImage(asset) {
+  const image = document.getElementById("detail-image");
+  const figure = image.closest(".detail-figure");
+  image.classList.remove("is-loaded");
+  image.hidden = !canRender(asset);
+  image.alt = asset.filename;
+  figure.classList.toggle("is-pending", canRender(asset));
+  image.addEventListener("load", () => {
+    figure.classList.remove("is-pending");
+    image.classList.add("is-loaded");
+  }, { once: true });
+  image.addEventListener("error", () => figure.classList.remove("is-pending"), { once: true });
+  image.src = canRender(asset) ? `/api/photos/assets/${encodeURIComponent(asset.id)}/image?size=detail` : "";
+}
+
 async function openDetail(assetId) {
   try {
     const asset = await fetchJson(`/api/photos/assets/${encodeURIComponent(assetId)}`);
-    const image = document.getElementById("detail-image");
-    image.src = canRender(asset) ? `/api/photos/assets/${encodeURIComponent(asset.id)}/image?size=detail` : "";
-    image.hidden = !canRender(asset);
-    image.alt = asset.filename;
+    showDetailImage(asset);
     document.getElementById("detail-title").textContent = asset.filename;
     renderMeta(asset);
 
-    const mark = document.getElementById("detail-mark");
-    mark.dataset.id = asset.id;
-    setMarkButton(mark, asset.mark === "delete");
+    showMarks(asset.id, asset.mark);
     detail.showModal();
     document.getElementById("detail-meta").scrollTop = 0;
   } catch (error) {
@@ -275,34 +385,57 @@ async function openDetail(assetId) {
   }
 }
 
-function setMarkButton(button, marked) {
-  button.setAttribute("aria-pressed", String(marked));
-  button.textContent = marked ? "Marked to delete" : "Mark to delete";
+// Which of the two levels this asset carries, if any. The id rides on the
+// group so a button only has to know its own level.
+function showMarks(assetId, mark) {
+  markButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.mark === mark)));
+  document.querySelector(".detail-marks").dataset.id = assetId;
 }
 
-async function toggleMark(button) {
-  const marked = button.getAttribute("aria-pressed") === "true";
-  button.disabled = true;
+// Pressing the level an asset already carries clears it: the third state has
+// no button of its own because "not marked" is not a decision to record.
+async function setMark(button) {
+  const assetId = document.querySelector(".detail-marks").dataset.id;
+  const was = markButtons.find((item) => item.getAttribute("aria-pressed") === "true")?.dataset.mark ?? null;
+  const mark = was === button.dataset.mark ? null : button.dataset.mark;
+  markButtons.forEach((item) => { item.disabled = true; });
   try {
-    const updated = await fetchJson(`/api/photos/assets/${encodeURIComponent(button.dataset.id)}/mark`, {
+    await fetchJson(`/api/photos/assets/${encodeURIComponent(assetId)}/mark`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mark: marked ? null : "delete" }),
+      body: JSON.stringify({ mark }),
     });
     clearError();
-    setMarkButton(button, !marked);
-    const card = grid.querySelector(`[data-id="${CSS.escape(button.dataset.id)}"]`);
+    showMarks(assetId, mark);
+    const card = grid.querySelector(`[data-id="${CSS.escape(assetId)}"]`);
     // Set the value rather than toggling the attribute: an empty attribute
-    // would not match the `[data-mark="delete"]` the outline hangs off.
-    if (marked) card?.removeAttribute("data-mark");
-    else card?.setAttribute("data-mark", "delete");
-    showTotals(updated.totals);
+    // would not match the `[data-mark]` levels the outline hangs off.
+    if (mark) card?.setAttribute("data-mark", mark);
+    else card?.removeAttribute("data-mark");
+    countMark(was, mark);
   } catch (error) {
     showError(error.message);
   } finally {
-    button.disabled = false;
+    markButtons.forEach((item) => { item.disabled = false; });
   }
 }
+
+// Move the header's counts by the one mark that changed. The server could
+// recount, but that is a scan of the whole library off a USB disk on a button
+// somebody clicks over and over; this is the same arithmetic without the wait.
+function countMark(was, now) {
+  if (was === now) return;
+  const totals = { ...lastTotals };
+  if (was) totals[`marked_${was}`] -= 1;
+  if (now) totals[`marked_${now}`] += 1;
+  totals.marked += (now ? 1 : 0) - (was ? 1 : 0);
+  showTotals(totals);
+}
+
+// The last totals the server gave, kept up to date here as marks change: the
+// count is the only part a click moves, and recounting it costs a scan of the
+// whole library off a USB disk.
+let lastTotals = { marked: 0 };
 
 // Size first, then only the counts that are actually saying something: a zero
 // here is the normal state and does not need a column of its own.
@@ -312,10 +445,29 @@ function showTotals(totals) {
   if (freed) parts.push(`${freed.toLocaleString()} only on this drive`);
   if (totals.marked) parts.push(`${totals.marked.toLocaleString()} marked to delete`);
   librarySummary.textContent = parts.join(" · ");
+  lastTotals = totals;
+  pruneButton.hidden = !totals.marked;
+  pruneButton.textContent = `Delete ${totals.marked.toLocaleString()}`;
 }
 
+
+function askToPrune() {
+  document.getElementById("prune-confirm-lines").replaceChildren(
+    ...MARK_LINES.filter(([key]) => lastTotals[key]).map(([key, wording]) => {
+      const line = document.createElement("li");
+      line.textContent = `${lastTotals[key].toLocaleString()} ${wording}`;
+      return line;
+    }),
+  );
+  pruneConfirm.showModal();
+}
+
+// The first option is the "any" one the markup ships with, and it is what a
+// cleared filter selects, so a reload keeps it and replaces only what follows.
 function fillOptions(name, values, label = (item) => item.value) {
   const select = form.elements[name];
+  const chosen = select.value;
+  while (select.options.length > 1) select.remove(1);
   select.append(
     ...values.map((item) => {
       const option = document.createElement("option");
@@ -324,22 +476,97 @@ function fillOptions(name, values, label = (item) => item.value) {
       return option;
     }),
   );
+  select.value = chosen;
 }
 
+async function loadFacets() {
+  const { facets, totals } = await fetchJson("/api/photos/facets");
+  fillOptions("camera", facets.cameras);
+  fillOptions("year", facets.years);
+  fillOptions("album", facets.albums);
+  fillOptions("type", facets.types);
+  showTotals(totals);
+}
+
+// The two long jobs -- pulling from iCloud and deleting from it -- are the same
+// shape: minutes of work on the server, watched here rather than waited on.
+// Their state lives on the server, so a reloaded page picks up a run already
+// going, and both end by reloading a library they have changed.
+function job(url, button) {
+  // Only a run this page watched end is worth reloading for: the last run's
+  // result is still sitting there on every fresh load, and re-querying for it
+  // would be a second full page of thumbnails for nothing.
+  let watched = false;
+
+  // The phase while it runs, what it managed once it stops. A failure is the
+  // page's to report, so it goes in the banner every other one uses.
+  function show(state) {
+    const running = state.status === "running";
+    button.dataset.busy = String(running);
+    button.disabled = running;
+    if (running) jobStatus.textContent = state.phase ? `${state.phase}…` : "";
+    else if (state.status === "done") jobStatus.textContent = state.message;
+    if (state.status === "error") showError(state.message);
+  }
+
+  async function poll() {
+    let state;
+    try {
+      state = await fetchJson(url);
+    } catch (error) {
+      button.dataset.busy = "false";
+      button.disabled = false;
+      showError(error.message);
+      return;
+    }
+    show(state);
+    if (state.status === "running") {
+      watched = true;
+      setTimeout(poll, REFRESH_POLL_MS);
+      return;
+    }
+    if (watched) {
+      watched = false;
+      if (state.status === "done") {
+        await loadFacets();
+        await loadPage();
+      }
+    }
+  }
+
+  async function start() {
+    button.disabled = true;
+    try {
+      show(await fetchJson(url, { method: "POST" }));
+      clearError();
+      watched = true;
+      setTimeout(poll, REFRESH_POLL_MS);
+    } catch (error) {
+      button.disabled = false;
+      showError(error.message);
+    }
+  }
+
+  return { start, poll };
+}
+
+const refreshJob = job("/api/photos/refresh", refreshButton);
+const pruneJob = job("/api/photos/prune", pruneButton);
+
 async function start() {
+  applyDensity();
+  startLoading(false);
   try {
-    const { facets, totals } = await fetchJson("/api/photos/facets");
-    fillOptions("camera", facets.cameras);
-    fillOptions("year", facets.years);
-    fillOptions("album", facets.albums);
-    fillOptions("type", facets.types);
-    showTotals(totals);
+    await loadFacets();
   } catch (error) {
+    stopLoading();
+    resultCount.textContent = "";
     showFatalError(`${error.message} Is the backup drive mounted?`);
     return;
   }
-  applyDensity();
   await loadPage();
+  refreshJob.poll();
+  pruneJob.poll();
 }
 
 // Typing fires an input event per character, and each page costs a filtered
@@ -356,13 +583,6 @@ form.addEventListener("input", (event) => {
 });
 form.addEventListener("submit", (event) => event.preventDefault());
 
-for (const button of form.querySelectorAll("[data-flag]")) {
-  button.addEventListener("click", () => {
-    button.setAttribute("aria-pressed", String(button.getAttribute("aria-pressed") !== "true"));
-    loadPage();
-  });
-}
-
 // Density is a view setting, not a filter: the select carries no `name`, so it
 // never reaches the query string and never re-queries the library.
 function applyDensity() {
@@ -371,8 +591,17 @@ function applyDensity() {
 
 perRow.addEventListener("change", applyDensity);
 
+refreshButton.addEventListener("click", refreshJob.start);
+pruneButton.addEventListener("click", askToPrune);
+document.getElementById("prune-cancel").addEventListener("click", () => pruneConfirm.close());
+document.getElementById("prune-go").addEventListener("click", () => {
+  pruneConfirm.close();
+  pruneJob.start();
+});
 loadMore.addEventListener("click", () => loadPage({ append: true }));
 document.getElementById("detail-close").addEventListener("click", () => detail.close());
-document.getElementById("detail-mark").addEventListener("click", (event) => toggleMark(event.currentTarget));
+for (const button of markButtons) {
+  button.addEventListener("click", (event) => setMark(event.currentTarget));
+}
 
 start();

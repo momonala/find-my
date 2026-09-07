@@ -23,6 +23,7 @@ from typing import NamedTuple
 from tqdm import tqdm
 
 from icloud_photo_metadata import library
+from icloud_photo_metadata.drive import scan
 from icloud_photo_metadata.drive import sha256
 from icloud_photo_metadata.icloud_source import DownloadError
 from icloud_photo_metadata.icloud_source import authenticate
@@ -31,6 +32,8 @@ from icloud_photo_metadata.icloud_source import find_assets
 from icloud_photo_metadata.library import BackedUpAsset
 from icloud_photo_metadata.library import BackedUpFile
 from icloud_photo_metadata.models import PhotoMetadata
+from icloud_photo_metadata.pull_metadata import PullResult
+from icloud_photo_metadata.pull_metadata import refresh_incremental
 
 DEFAULT_DIR = Path("/Volumes/TOSHIBA_1TB/pictures/icloud-backup")
 
@@ -184,6 +187,72 @@ def build_plan(index: BackupIndex, directory: Path) -> SyncPlan:
     if len(set(wanted)) != len(wanted):
         raise ValueError("two files resolved to one path; the id fragment is not unique")
     return SyncPlan(downloads=downloads)
+
+
+class MetadataPullFailed(Exception):
+    """The metadata pull lost pages, so the library was left as it was.
+
+    Planning against a partial view could miss whole assets, and a download
+    reporting success against it would claim a backup it never made.
+    """
+
+    def __init__(self, result: PullResult) -> None:
+        super().__init__(f"{result.failed_pages} metadata pages failed after retries.")
+        self.result = result
+
+
+@dataclass(frozen=True)
+class Survey:
+    """What one look at iCloud and the drive found."""
+
+    plan: SyncPlan
+    index: BackupIndex
+    api: Any
+    # Not just the eligible ones: the comparison needs Hidden and Recently
+    # Deleted to tell a freed asset from a hidden one.
+    in_icloud: list[PhotoMetadata]
+    pulled: PullResult
+    files_on_drive: int
+
+
+def survey(
+    conn: sqlite3.Connection,
+    directory: Path,
+    *,
+    api: Any | None = None,
+    quiet: bool = False,
+) -> Survey:
+    """Refresh the metadata, then work out what the drive is missing.
+
+    Shared by the CLI's plan and download and by the web's refresh, so the
+    three cannot disagree. The refresh is not optional: a plan built from
+    whatever the library last held could report the drive matches iCloud
+    having never asked iCloud anything.
+
+    Raises:
+        MetadataPullFailed: If the pull lost pages. Nothing was written.
+    """
+    if api is None:
+        api = authenticate()
+    pulled = refresh_incremental(conn, api, quiet=quiet)
+    if not pulled.is_complete:
+        raise MetadataPullFailed(pulled)
+
+    # A freed asset cannot be downloaded, so counting it missing would put it
+    # in every plan forever.
+    in_icloud = library.load_assets(conn, in_icloud_only=True)
+    photos = eligible(in_icloud)
+    files = scan(directory)
+
+    index = build_index(photos, files, library.backed_up(conn), directory)
+    return Survey(
+        plan=build_plan(index, directory),
+        index=index,
+        api=api,
+        in_icloud=in_icloud,
+        pulled=pulled,
+        files_on_drive=len(files),
+    )
 
 
 @dataclass

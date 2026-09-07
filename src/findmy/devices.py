@@ -21,6 +21,7 @@ from pyicloud.exceptions import PyiCloudFailedLoginException
 from src.core.errors import InteractiveAuthRequiredError
 from src.core.errors import LoginFailedError
 from src.core.errors import TwoFactorRejectedError
+from src.core.icloud_session import harden
 from src.core.paths import SESSION_DIR
 from src.findmy.tracking import Location
 from src.findmy.tracking import TrackedItem
@@ -45,6 +46,7 @@ def _authenticate() -> PyiCloudService:
     """
     username, password = require_credentials()
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    harden()
 
     try:
         api = PyiCloudService(

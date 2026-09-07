@@ -1,7 +1,8 @@
 """JSON and image routes over the photo library on the backup drive.
 
-Read-only apart from the mark, which records a decision to delete an asset from
-iCloud. Nothing here deletes anything, from iCloud or from the drive.
+Read-only apart from three routes: the mark, which records a decision about an
+asset; the refresh, which pulls from iCloud onto the drive; and the prune, which
+carries the marks out and is the only thing here that deletes anything.
 
 The library lives on removable storage, so every route opens its own connection
 and fails with 503 rather than 500 when the drive is not mounted.
@@ -25,8 +26,11 @@ from icloud_photo_metadata import library
 from icloud_photo_metadata import queries
 from icloud_photo_metadata.backup import DEFAULT_DIR
 from src.web.auth import require_write_token
+from src.web.photos.pruning import pruning
 from src.web.photos.schemas import parse_filters
 from src.web.photos.schemas import parse_mark_payload
+from src.web.photos.schemas import parse_prune_payload
+from src.web.photos.sync import refresh
 from src.web.photos.thumbnails import SIZES
 from src.web.photos.thumbnails import UnrenderableAsset
 from src.web.photos.thumbnails import thumbnail
@@ -86,16 +90,63 @@ def get_asset(asset_id: str) -> ResponseReturnValue:
 
 @bp.put("/assets/<asset_id>/mark")
 def put_mark(asset_id: str) -> ResponseReturnValue:
-    """Flag an asset for deletion from iCloud, or clear the flag.
+    """Flag an asset for deletion at one of `queries.MARKS`, or clear the flag.
 
-    Recorded only. Freeing the space is still done by hand in the Photos app.
+    Recorded only. `POST /prune` is what carries it out.
+
+    Deliberately does not answer with the library's totals. Recounting them
+    means scanning every asset off the drive, which is 18 ms when its pages are
+    cached and was measured at 3.7 s when they are not -- on the one route a
+    person clicks over and over. The page knows the mark it sent and the one it
+    replaced, which is the whole of what changed.
     """
     require_write_token()
     mark = parse_mark_payload()
     with _writing() as conn:
         if not queries.set_mark(conn, asset_id, mark):
             abort(404, description=f"No asset {asset_id}.")
-        return jsonify({"id": asset_id, "mark": mark, "totals": queries.totals(conn)})
+    return jsonify({"id": asset_id, "mark": mark})
+
+
+@bp.get("/refresh")
+def get_refresh() -> ResponseReturnValue:
+    """How the running -- or last -- sync is going."""
+    return jsonify(refresh.state())
+
+
+@bp.post("/refresh")
+def post_refresh() -> ResponseReturnValue:
+    """Pull what iCloud has that the drive does not, in the background.
+
+    Answers as soon as the sync is under way; the run itself takes minutes, and
+    GET reports where it got to.
+    """
+    require_write_token()
+    _require_library()
+    if not refresh.start(DEFAULT_DIR):
+        abort(409, description="A refresh is already running.")
+    return jsonify(refresh.state()), 202
+
+
+@bp.get("/prune")
+def get_prune() -> ResponseReturnValue:
+    """How the running -- or last -- prune went."""
+    return jsonify(pruning.state())
+
+
+@bp.post("/prune")
+def post_prune() -> ResponseReturnValue:
+    """Delete what is marked, in the background.
+
+    Answers as soon as the prune is under way. What it will delete is decided
+    inside the run, from the marks as they stand then, so this route promises
+    nothing about which assets it took.
+    """
+    require_write_token()
+    _require_library()
+    if not pruning.start(DEFAULT_DIR, parse_prune_payload()):
+        abort(409, description="A prune is already running.")
+    return jsonify(pruning.state()), 202
 
 
 @bp.get("/assets/<asset_id>/image")

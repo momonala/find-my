@@ -11,7 +11,6 @@ import atexit
 from flask import Flask
 from flask import jsonify
 from flask import redirect
-from flask import render_template
 from flask import url_for
 from flask.typing import ResponseReturnValue
 
@@ -63,8 +62,9 @@ def create_app(*, start_poller: bool = True) -> Flask:
         return {"nav_items": NAV_ITEMS}
 
     @app.get("/")
-    def home() -> str:
-        return render_template("home.html", active_page="home")
+    def home() -> ResponseReturnValue:
+        """The nav is the only index the shell needs, so the root just opens the first page."""
+        return redirect(url_for("findmy.page"))
 
     @app.get("/dashboard")
     def legacy_dashboard() -> ResponseReturnValue:

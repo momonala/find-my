@@ -10,6 +10,7 @@ from __future__ import annotations
 from flask import abort
 from flask import request
 
+from icloud_photo_metadata.queries import MARK_FILTERS
 from icloud_photo_metadata.queries import MARKS
 from icloud_photo_metadata.queries import SORTS
 from icloud_photo_metadata.queries import Filters
@@ -29,8 +30,8 @@ def parse_filters() -> Filters:
         abort(400, description=f"Unknown sort {sort!r}; expected one of {sorted(SORTS)}.")
 
     mark = request.args.get("mark")
-    if mark is not None and mark not in MARKS:
-        abort(400, description=f"Unknown mark {mark!r}; expected one of {list(MARKS)}.")
+    if mark is not None and mark not in MARK_FILTERS:
+        abort(400, description=f"Unknown mark {mark!r}; expected one of {list(MARK_FILTERS)}.")
 
     return Filters(
         search=request.args.get("search") or None,
@@ -64,6 +65,24 @@ def parse_mark_payload() -> str | None:
         return None
     if mark not in MARKS:
         abort(400, description=f"Body must carry {_MARK_BODY_SHAPE}.")
+    return str(mark)
+
+
+def parse_prune_payload() -> str | None:
+    """Which level of mark a prune should carry out, or None for every level.
+
+    An absent `mark` is the deliberate default: the button that prunes both
+    sends no body at all.
+
+    Raises:
+        HTTPException: 400 if the body names a mark this library does not have.
+    """
+    body = request.get_json(silent=True) or {}
+    mark = body.get("mark") if isinstance(body, dict) else None
+    if mark is None:
+        return None
+    if mark not in MARKS:
+        abort(400, description=f"Unknown mark {mark!r}; expected one of {list(MARKS)}.")
     return str(mark)
 
 

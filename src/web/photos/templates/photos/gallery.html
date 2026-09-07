@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon with context %}
 {% block title %}Photos{% endblock %}
 
 {% block head %}
@@ -9,7 +10,19 @@
 <main class="page photos-page">
   {#- The nav bar names the page; this keeps the document outline intact. -#}
   <h1 class="visually-hidden">Photos</h1>
-  <p id="library-summary" class="photos-summary" hidden></p>
+  <div class="photos-header">
+    <p id="library-summary" class="photos-summary" hidden></p>
+    {#- Not a filter, so it sits outside the filter form: it changes the
+        library rather than the view of it. -#}
+    <div class="photos-header-actions">
+      <p id="job-status" class="photos-summary" role="status"></p>
+      <button type="button" id="prune" class="btn-floating btn-danger" hidden></button>
+      <button type="button" id="refresh" class="btn-floating btn-icon"
+              title="Pull new photos from iCloud" aria-label="Pull new photos from iCloud">
+        {{ icon("refresh", "refresh-icon") }}
+      </button>
+    </div>
+  </div>
 
   {#- No labels: each control's resting option says what it filters, and shows
       the chosen value once there is one. -#}
@@ -56,14 +69,17 @@
       <option value="12">12 per row</option>
       <option value="16">16 per row</option>
     </select>
-    <button type="button" class="btn-floating filter-flag" data-flag="favorite" aria-pressed="false">
-      Favourites
-    </button>
+    <select name="mark" class="dialog-select filter-control" aria-label="Marked for deletion">
+      <option value="">Mark (any)</option>
+      <option value="any">Marked, either level</option>
+      <option value="icloud">Marked: iCloud only</option>
+      <option value="everywhere">Marked: everywhere</option>
+    </select>
   </form>
 
   <p id="result-count" class="photos-summary" role="status"></p>
 
-  <ul id="grid" class="card-grid photo-grid"></ul>
+  <ul id="grid" class="photo-grid" aria-busy="false"></ul>
 
   <div class="grid-footer">
     <button type="button" id="load-more" class="btn-floating" hidden>Show more</button>
@@ -71,11 +87,38 @@
   </div>
 </main>
 
+{#- A prune deletes from Apple's servers, so it asks first and says exactly
+    what it is about to take. -#}
+<dialog id="prune-confirm" class="app-dialog prune-confirm" aria-labelledby="prune-confirm-title">
+  <h2 id="prune-confirm-title">Delete what is marked?</h2>
+  <ul id="prune-confirm-lines" class="prune-lines"></ul>
+  <p class="photos-summary">
+    Deleted assets go to Recently Deleted, where Apple keeps them for 30 days. Anything marked
+    <strong>Everywhere</strong> also loses the drive's copy, which nothing can undo.
+  </p>
+  <p class="photos-summary">
+    An asset marked <strong>iCloud</strong> is skipped unless the drive's copy still hashes to what was
+    recorded. It stays marked, so it is picked up once that is fixed.
+  </p>
+  <div class="detail-buttons">
+    <button type="button" id="prune-cancel" class="btn-floating">Cancel</button>
+    <button type="button" id="prune-go" class="btn-floating btn-danger">Delete</button>
+  </div>
+</dialog>
+
 <dialog id="detail" class="app-dialog photo-detail" aria-labelledby="detail-title">
   <header class="detail-header">
     <h2 id="detail-title"></h2>
     <div class="detail-buttons">
-      <button type="button" id="detail-mark" class="btn-floating" aria-pressed="false">Mark to delete</button>
+      {#- Two levels, not one toggle: where the bytes go is the decision, and
+          the drive's copy is the one that cannot be undeleted. Pressing the
+          level an asset already carries clears the mark. -#}
+      <div class="detail-marks" role="group" aria-label="Mark for deletion">
+        <button type="button" class="btn-floating detail-mark" data-mark="icloud" aria-pressed="false"
+                title="Delete from iCloud and keep the drive's copy">iCloud</button>
+        <button type="button" class="btn-floating detail-mark" data-mark="everywhere" aria-pressed="false"
+                title="Delete from iCloud and from the backup drive">Everywhere</button>
+      </div>
       <button type="button" id="detail-close" class="btn-floating">Close</button>
     </div>
   </header>

@@ -7,12 +7,19 @@ under `data/`, and deleting it costs one slow page.
 
 Each conversion is ~0.3s, so the cache is what makes the gallery usable rather
 than an optimisation on top of it.
+
+A movie has no still on the drive, so its tile is a frame taken with whatever
+`ffmpeg` is on PATH -- 0.12s, cached the same way. There is no Python video
+dependency and nothing to install: without ffmpeg a movie simply has no
+thumbnail, which is what the gallery showed for all of them before.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -34,8 +41,16 @@ SIZES = {"grid": 400, "detail": 1600}
 _JPEG_QUALITY = 82
 
 
+# Everything the library files as `item_type = movie`.
+_VIDEO_SUFFIXES = frozenset({".mov", ".mp4", ".m4v"})
+
+# Long enough for a frame off a USB disk, short enough that a file ffmpeg
+# cannot make sense of does not hold a request thread.
+_FRAME_TIMEOUT_SECONDS = 30
+
+
 class UnrenderableAsset(RuntimeError):
-    """The original is not an image Pillow can decode -- a video, or a broken file."""
+    """Nothing on the drive can be turned into a picture of this asset."""
 
 
 def thumbnail(original: Path, size: str) -> Path:
@@ -57,8 +72,11 @@ def thumbnail(original: Path, size: str) -> Path:
     handle, partial_name = tempfile.mkstemp(dir=cached.parent, suffix=".part")
     os.close(handle)
     partial = Path(partial_name)
+    # A frame is a full-size JPEG that then goes through the same resize as any
+    # other original, so a movie's tile and a photo's are made the same way.
+    frame = _poster_frame(original) if original.suffix.lower() in _VIDEO_SUFFIXES else None
     try:
-        with Image.open(original) as image:
+        with Image.open(frame or original) as image:
             # iPhone writes the sensor's orientation to EXIF rather than
             # rotating the pixels, so without this a third of the grid is sideways.
             upright = ImageOps.exif_transpose(image)
@@ -69,7 +87,60 @@ def thumbnail(original: Path, size: str) -> Path:
         raise UnrenderableAsset(f"{original.name}: {error}") from error
     finally:
         partial.unlink(missing_ok=True)
+        if frame is not None:
+            frame.unlink(missing_ok=True)
     return cached
+
+
+def _poster_frame(video: Path) -> Path:
+    """A still from the first second of `video`, as a temporary JPEG.
+
+    ffmpeg is looked up per call rather than at import, so installing it does
+    not need the server restarted.
+
+    Raises:
+        UnrenderableAsset: If there is no ffmpeg, or it cannot read the file.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise UnrenderableAsset(f"{video.name}: no ffmpeg on PATH to take a frame from")
+
+    handle, name = tempfile.mkstemp(suffix=".jpg")
+    os.close(handle)
+    frame = Path(name)
+    try:
+        # `-f image2` because the destination is a temp file ffmpeg cannot read
+        # a format from. Rotation is applied from the container's matrix, which
+        # is the only reason a phone's video comes out upright.
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-ss",
+                "0",
+                "-i",
+                str(video),
+                "-frames:v",
+                "1",
+                "-f",
+                "image2",
+                "-y",
+                str(frame),
+            ],
+            capture_output=True,
+            timeout=_FRAME_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, OSError) as error:
+        frame.unlink(missing_ok=True)
+        raise UnrenderableAsset(f"{video.name}: {error}") from error
+
+    if result.returncode != 0 or not frame.stat().st_size:
+        detail = result.stderr.decode(errors="replace").strip() or "no frame came back"
+        frame.unlink(missing_ok=True)
+        raise UnrenderableAsset(f"{video.name}: {detail}")
+    return frame
 
 
 def _cache_path(original: Path, size: str) -> Path:

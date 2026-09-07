@@ -36,15 +36,20 @@ from pyicloud.services.photos_cloudkit.constants import SmartAlbumEnum
 from pyicloud.services.photos_cloudkit.mappers import decode_encrypted_text
 from pyicloud.services.photos_cloudkit.mappers import record_field_value
 from pyicloud.services.photos_cloudkit.materialize import build_xmp_metadata
+from pyicloud.services.photos_cloudkit.models import CKZoneIDReq
+from pyicloud.services.photos_cloudkit.service import PhotoAsset
 
 from icloud_photo_metadata.models import GpsFix
 from icloud_photo_metadata.models import PhotoMetadata
 from icloud_photo_metadata.models import StoredResource
+from src.core.icloud_session import harden
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ENV_FILE = _REPO_ROOT / ".env"
-# Mirrors src/tracking.py's SESSION_DIR rather than importing it, so this tool
-# stays independent of the app it borrows credentials from.
+# Mirrors src/core/paths.py's SESSION_DIR rather than importing it, so this tool
+# stays independent of the app it borrows credentials from. `harden` is the one
+# exception: it locks that shared directory, and two independent copies of a
+# lock would not be one.
 _SESSION_DIR = _REPO_ROOT / ".icloud_session"
 
 LIBRARY_ALBUM = SmartAlbumEnum.ALL_PHOTOS.value
@@ -80,6 +85,14 @@ class DownloadError(Exception):
     """An asset's original file could not be fetched."""
 
 
+class AssetNotFound(Exception):
+    """iCloud has no record under that asset id."""
+
+
+class DeleteFailed(Exception):
+    """iCloud refused to delete an asset."""
+
+
 @dataclass(frozen=True)
 class PageTask:
     """One page of one album -- the unit of work a pull is split into."""
@@ -105,6 +118,7 @@ def authenticate() -> PyiCloudService:
         raise typer.Exit(1)
 
     _SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    harden()
     api = PyiCloudService(username, password, cookie_directory=str(_SESSION_DIR))
 
     if api.requires_2fa:
@@ -230,6 +244,84 @@ def _read_page(album: Any, offset: int, page_size: int) -> list[Any]:
                 raise
             time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
     raise AssertionError("unreachable")
+
+
+def fetch_asset(api: PyiCloudService, asset_id: str, album_name: str = LIBRARY_ALBUM) -> Any:
+    """The live pyicloud asset behind one id, fetched by record name.
+
+    `find_assets` pages an album to reach an asset, which is right when a run
+    wants most of the library and ruinous when it wants three photos: an id from
+    2018 costs a walk through everything newer. This asks CloudKit for the
+    record itself, which is one request regardless of age -- 0.3s against the
+    five minutes `album._get_photo` takes, because that falls back to crawling
+    the album whenever its indexed lookup misses, which for a smart album is
+    always.
+
+    `album_name` only resolves the zone, which every smart album shares, so a
+    stale one costs nothing.
+
+    Raises:
+        AssetNotFound: If CloudKit returns no `CPLAsset` under that id.
+    """
+    album = api.photos.albums.get(album_name)
+    if album is None:
+        raise AssetNotFound(f"iCloud has no album {album_name!r} to look {asset_id} up in")
+    zone = CKZoneIDReq(**album._library.zone_id)
+    asset_record = _lookup_one(api, asset_id, zone, record_type="CPLAsset")
+    master_id = _reference_name(record_field_value(asset_record, "masterRef"))
+    if master_id is None:
+        raise AssetNotFound(f"the CPLAsset for {asset_id} names no master record")
+    master_record = _lookup_one(api, master_id, zone, record_type="CPLMaster")
+    return PhotoAsset(album._library.service, master_record, asset_record)
+
+
+def _reference_name(reference: Any) -> str | None:
+    """The record a CloudKit reference points at, whichever shape it arrives in.
+
+    The typed client hands back a `CKReference` object; the raw session path
+    hands back the JSON it was parsed from.
+    """
+    if isinstance(reference, dict):
+        return reference.get("recordName")
+    return getattr(reference, "recordName", None)
+
+
+def _lookup_one(api: PyiCloudService, record_name: str, zone: CKZoneIDReq, *, record_type: str) -> Any:
+    """One CloudKit record by name, retried the way a page read is.
+
+    Raises:
+        AssetNotFound: If nothing of that type comes back.
+    """
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            with _SESSION_LOCK:
+                response = api.photos._private_client.lookup(record_names=[record_name], zone_id=zone)
+            break
+        except Exception:  # noqa: BLE001 -- reverse-engineered API, any failure is worth a retry
+            if attempt == _MAX_RETRIES:
+                raise
+            time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+
+    for record in response.records:
+        if record.recordType == record_type:
+            return record
+    raise AssetNotFound(f"iCloud returned no {record_type} for {record_name}")
+
+
+def delete_asset(asset: Any) -> None:
+    """Move one asset to Recently Deleted, as the Photos app's delete does.
+
+    Not a purge: Apple holds it for 30 days, and a pull that sees it there files
+    it under Recently Deleted rather than losing it.
+
+    Raises:
+        DeleteFailed: If iCloud does not accept the change.
+    """
+    try:
+        with _SESSION_LOCK:
+            asset.delete()
+    except Exception as error:  # noqa: BLE001 -- reverse-engineered API, any failure reads the same
+        raise DeleteFailed(f"{asset.id}: {error}") from error
 
 
 def download_original(

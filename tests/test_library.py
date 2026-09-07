@@ -197,6 +197,52 @@ def test_a_pull_records_when_it_happened(tmp_path: Path) -> None:
         assert (datetime.now(UTC) - pulled).total_seconds() < 60
 
 
+def test_a_v1_library_is_migrated_rather_than_refused(tmp_path: Path) -> None:
+    """The drive's library is the durable record, so a version bump migrates it.
+
+    v1's single `delete` mark meant what v2 calls `icloud`: free the iCloud copy
+    and keep the drive's. Reading it as `everywhere` would turn a decision about
+    Apple's disk into one about the only remaining copy.
+    """
+    with library.library(tmp_path) as conn:
+        library.replace_assets(conn, [fully_populated()])
+        conn.execute("DROP TABLE marks")
+        conn.executescript("""
+            CREATE TABLE marks (
+                asset_id  TEXT PRIMARY KEY REFERENCES assets(id),
+                mark      TEXT NOT NULL CHECK (mark IN ('delete', 'keep')),
+                marked_at TEXT NOT NULL
+            );
+            INSERT INTO marks VALUES ('asset-1', 'delete', '2026-01-01 00:00:00');
+            PRAGMA user_version=1;
+            """)
+        conn.commit()
+
+    with library.library(tmp_path) as conn:
+        rows = [dict(row) for row in conn.execute("SELECT * FROM marks")]
+
+    assert rows == [
+        {
+            "asset_id": "asset-1",
+            "mark": "icloud",
+            "marked_at": "2026-01-01 00:00:00",
+            "executed_at": None,
+        }
+    ]
+
+
+def test_a_read_only_open_migrates_a_library_that_is_behind(tmp_path: Path) -> None:
+    """A page view cannot write, and reading v1 rows as v2 would misreport them."""
+    library.connect(tmp_path).close()
+    conn = sqlite3.connect(tmp_path / library.LIBRARY_NAME)
+    conn.execute("PRAGMA user_version=1")
+    conn.commit()
+    conn.close()
+
+    with library.reading(tmp_path) as reader:
+        assert int(reader.execute("PRAGMA user_version").fetchone()[0]) == library.SCHEMA_VERSION
+
+
 def test_a_library_from_another_schema_refuses_to_open(tmp_path: Path) -> None:
     """Opening it anyway would write rows the older tool cannot read back."""
     library.connect(tmp_path).close()

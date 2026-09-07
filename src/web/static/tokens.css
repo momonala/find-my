@@ -7,6 +7,8 @@
 :root {
   --color-bg: #17181a;
   --color-surface: #202226;
+  /* One step above a surface: a tile that is waiting for its picture. */
+  --color-surface-pending: #2a2c31;
   --color-surface-translucent: rgba(28, 29, 33, 0.82);
   --color-border: #34363b;
   --color-text: #f1f1f3;
@@ -50,6 +52,10 @@
   --duration-drawer: 364ms;
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-battery-pulse: 1560ms;
+  /* Slow enough to read as "still working" rather than as a flashing tile. */
+  --duration-pending-pulse: 1400ms;
+  /* One turn of the refresh icon while a sync runs. */
+  --duration-refresh-spin: 1100ms;
 }
 
 /* Every transition in these sheets is timed by a duration token, so zeroing

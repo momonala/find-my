@@ -664,12 +664,12 @@ def stub_pull(monkeypatch: pytest.MonkeyPatch, result: PullResult) -> list[objec
     """Stand in for the metadata refresh, recording the session it was handed."""
     sessions: list[object] = []
 
-    def refresh(_conn: object, api: object) -> PullResult:
+    def refresh(_conn: object, api: object, **_kwargs: object) -> PullResult:
         sessions.append(api)
         return result
 
-    monkeypatch.setattr(cli, "authenticate", lambda: "session")
-    monkeypatch.setattr(cli, "refresh_incremental", refresh)
+    monkeypatch.setattr(backup, "authenticate", lambda: "session")
+    monkeypatch.setattr(backup, "refresh_incremental", refresh)
     return sessions
 
 
@@ -691,7 +691,7 @@ def test_download_refuses_to_plan_against_an_incomplete_pull(
     scanned: list[object] = []
     monkeypatch.setattr(cli, "DEFAULT_DIR", tmp_path)
     stub_pull(monkeypatch, PullResult(0, 3))
-    monkeypatch.setattr(cli, "scan", lambda *_, **__: scanned.append(1) or {})
+    monkeypatch.setattr(backup, "scan", lambda *_, **__: scanned.append(1) or {})
 
     result = CliRunner().invoke(app, ["download"])
 

@@ -31,6 +31,14 @@ The first command that talks to Apple asks for a 2FA code and caches the session
 Do that at a terminal before starting the server, because `serve` cannot prompt you and will just come up
 empty.
 
+**One session, two writers, one lock.** The poller inside `serve` and the photo tool both read and write
+`.icloud_session/`, and pyicloud persists it with a plain truncating `open(path, "w")` on every request
+that carries new session headers. Nothing in pyicloud serialises that, so a poll overlapping a photo
+command leaves a reader looking at a half-written file: the JSON fails to parse, pyicloud decides there is
+no session, and asks for a 2FA code for one that was perfectly good. Measured on a file that size, 192 of
+200 concurrent reads came back truncated. `src/core/icloud_session.py` puts an advisory file lock around
+every read and every write, and both entry points call it before building a session.
+
 For the photo tool, which has its own dependencies and its own entry point:
 
 ```bash
@@ -127,6 +135,7 @@ my-cloud/
 │   ├── cli.py                  the `mycloud` command
 │   ├── core/                   infrastructure with no domain knowledge
 │   │   ├── paths.py            repo root, data/, .icloud_session/
+│   │   ├── icloud_session.py   the lock that keeps two processes off one session file
 │   │   ├── config.py           non-secret config from pyproject.toml
 │   │   ├── env.py              secrets from .env
 │   │   ├── db.py               opening and migrating data/findmy.db, no queries
@@ -138,7 +147,7 @@ my-cloud/
 │       ├── app.py              app factory, shell routes, blueprint registration
 │       ├── nav.py              the page registry
 │       ├── auth.py             the write token every feature shares
-│       ├── templates/          base.html, home.html, _icons.html
+│       ├── templates/          base.html, _icons.html
 │       ├── static/             tokens.css, shell.css, shared JS modules
 │       ├── findmy/             the Find My page and its routes
 │       └── photos/             the photo gallery and its routes

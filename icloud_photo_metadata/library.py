@@ -28,7 +28,7 @@ from icloud_photo_metadata.models import StoredResource
 
 LIBRARY_NAME = "library.db"
 DUMP_NAME = LIBRARY_NAME + ".dump"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # A Live Photo has both. The still leads, because it is the asset.
 ORIGINAL = "original"
@@ -120,9 +120,10 @@ CREATE TABLE IF NOT EXISTS files (
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS marks (
-    asset_id  TEXT PRIMARY KEY REFERENCES assets(id),
-    mark      TEXT NOT NULL CHECK (mark IN ('delete', 'keep')),
-    marked_at TEXT NOT NULL
+    asset_id    TEXT PRIMARY KEY REFERENCES assets(id),
+    mark        TEXT NOT NULL CHECK (mark IN ('icloud', 'everywhere')),
+    marked_at   TEXT NOT NULL,
+    executed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS album_counts (
@@ -243,6 +244,17 @@ def exists(directory: Path) -> bool:
 def connect(directory: Path) -> sqlite3.Connection:
     """Open the drive's library for writing, creating the schema if the file is new.
 
+    A library already at `SCHEMA_VERSION` is opened and nothing else: no DDL, no
+    stamp, no transaction. That is not a micro-optimisation. The drive is exFAT
+    over USB, and re-running the schema means a write transaction with its
+    journal and two fsyncs -- measured at 10 ms typical and just under two
+    seconds at the tail. The gallery opens one of these per marked photo, so
+    the tail is what a click feels like.
+
+    The cost of that: `_SCHEMA` no longer reaches a library that already exists,
+    so a new table or index is only a new table on a new drive. Every schema
+    change needs a `_MIGRATIONS` step, including the additive ones.
+
     Raises:
         SchemaMismatch: If the file was written by a version this one cannot read.
     """
@@ -251,10 +263,47 @@ def connect(directory: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA foreign_keys=ON")
     _check_version(conn, directory)
+    if int(conn.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION:
+        return conn
+
+    _migrate(conn)
     conn.executescript(_SCHEMA)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     conn.commit()
     return conn
+
+
+# One statement block per step up from the version it is keyed by. Each runs in
+# the caller's transaction, so a half-applied migration is not a state the drive
+# can be left in.
+_MIGRATIONS: dict[int, str] = {
+    # v1 marks were a single 'delete' that nothing acted on, alongside a 'keep'
+    # that nothing ever wrote. v2 splits the decision by where the bytes go and
+    # records when it was carried out, so 'delete' reads as 'icloud': the level
+    # the v1 gallery described, freeing iCloud and leaving the drive's copy.
+    1: """
+    CREATE TABLE marks_v2 (
+        asset_id    TEXT PRIMARY KEY REFERENCES assets(id),
+        mark        TEXT NOT NULL CHECK (mark IN ('icloud', 'everywhere')),
+        marked_at   TEXT NOT NULL,
+        executed_at TEXT
+    );
+    INSERT INTO marks_v2 (asset_id, mark, marked_at)
+        SELECT asset_id, 'icloud', marked_at FROM marks WHERE mark = 'delete';
+    DROP TABLE marks;
+    ALTER TABLE marks_v2 RENAME TO marks;
+    """,
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Step an older library up to `SCHEMA_VERSION`, one version at a time."""
+    found = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if found == 0:  # A new file; `_SCHEMA` builds it at the current version.
+        return
+    with conn:
+        for version in range(found, SCHEMA_VERSION):
+            conn.executescript(_MIGRATIONS[version])
 
 
 @contextmanager
@@ -269,6 +318,7 @@ def reading(directory: Path) -> Iterator[sqlite3.Connection]:
     Raises:
         SchemaMismatch: If the file was written by a version this one cannot read.
     """
+    _catch_up(directory)
     conn = sqlite3.connect(f"file:{directory / LIBRARY_NAME}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
@@ -278,13 +328,38 @@ def reading(directory: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def _check_version(conn: sqlite3.Connection, directory: Path) -> None:
-    found = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    if found not in (0, SCHEMA_VERSION):
+def _catch_up(directory: Path) -> None:
+    """Migrate a library that is behind, since a read-only connection cannot.
+
+    Costs one read of `user_version` on a page view that has nothing to do, and
+    opens the writable connection that migrates only on the run that finds work.
+    """
+    if not exists(directory):
+        return
+    conn = sqlite3.connect(f"file:{directory / LIBRARY_NAME}?mode=ro", uri=True)
+    try:
+        behind = int(conn.execute("PRAGMA user_version").fetchone()[0]) not in (0, SCHEMA_VERSION)
+    finally:
         conn.close()
-        raise SchemaMismatch(
-            f"{directory / LIBRARY_NAME} is schema v{found}, this tool speaks v{SCHEMA_VERSION}."
-        )
+    if behind:
+        connect(directory).close()
+
+
+def _check_version(conn: sqlite3.Connection, directory: Path) -> None:
+    """Raise unless the library is current, or is one this version can migrate up.
+
+    Raises:
+        SchemaMismatch: If the file was written by a version this one cannot read.
+    """
+    found = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if found in (0, SCHEMA_VERSION):
+        return
+    if found < SCHEMA_VERSION and all(step in _MIGRATIONS for step in range(found, SCHEMA_VERSION)):
+        return
+    conn.close()
+    raise SchemaMismatch(
+        f"{directory / LIBRARY_NAME} is schema v{found}, this tool speaks v{SCHEMA_VERSION}."
+    )
 
 
 @contextmanager
@@ -485,6 +560,27 @@ def record_files(
                 for item in files
             ],
         )
+
+
+def record_gone(conn: sqlite3.Connection, asset_id: str) -> None:
+    """Record that an asset has left iCloud because this tool deleted it.
+
+    The same bookkeeping a pull does when it notices an absence, applied at the
+    moment of the delete so the library does not describe a copy that is gone
+    until the next pull runs.
+    """
+    with conn:
+        _mark_gone(conn, [asset_id])
+
+
+def forget_files(conn: sqlite3.Connection, asset_id: str) -> None:
+    """Drop this drive's claim on an asset's files, the asset row itself surviving.
+
+    For a copy deliberately deleted off the drive. The metadata is the point of
+    keeping the row: it outlives the bytes in both places.
+    """
+    with conn:
+        conn.execute("DELETE FROM files WHERE asset_id = ?", (asset_id,))
 
 
 def _upsert(conn: sqlite3.Connection, photos: Sequence[PhotoMetadata]) -> None:

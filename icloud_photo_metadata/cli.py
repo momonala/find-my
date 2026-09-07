@@ -11,11 +11,9 @@ Usage:
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import typer
 from rich.console import Console
@@ -23,19 +21,21 @@ from rich.table import Table
 
 from icloud_photo_metadata import library
 from icloud_photo_metadata import migrate_manifest
+from icloud_photo_metadata import prune as pruning
+from icloud_photo_metadata import queries
 from icloud_photo_metadata.backup import DEFAULT_DIR
 from icloud_photo_metadata.backup import MAX_FRUITLESS_REFRESHES
 from icloud_photo_metadata.backup import BackupIndex
+from icloud_photo_metadata.backup import MetadataPullFailed
+from icloud_photo_metadata.backup import Survey
 from icloud_photo_metadata.backup import SyncPlan
 from icloud_photo_metadata.backup import apply_plan
-from icloud_photo_metadata.backup import build_index
-from icloud_photo_metadata.backup import build_plan
 from icloud_photo_metadata.backup import eligible
-from icloud_photo_metadata.drive import scan
+from icloud_photo_metadata.backup import survey
 from icloud_photo_metadata.drive import sha256
 from icloud_photo_metadata.icloud_source import authenticate
 from icloud_photo_metadata.models import PhotoMetadata
-from icloud_photo_metadata.pull_metadata import refresh_incremental
+from icloud_photo_metadata.queries import MARKS
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
@@ -74,21 +74,25 @@ def _metadata_age(conn: sqlite3.Connection) -> str:
     return f"the metadata is {hours:.0f}h old" if hours < 48 else f"the metadata is {age.days} days old"
 
 
-def _refresh_metadata(conn: sqlite3.Connection, api: Any) -> None:
-    """Re-pull the metadata, refusing to plan against a partial view.
+def _survey(conn: sqlite3.Connection) -> Survey:
+    """Look at iCloud and the drive, reporting what the pull found.
 
-    A pull that lost pages could be missing whole assets, and a download
-    reporting success against it would claim a backup it never made.
+    Refusing to plan against a partial view is `survey`'s rule; saying so is
+    this layer's job.
     """
-    result = refresh_incremental(conn, api)
-    if not result.is_complete:
+    try:
+        found = survey(conn, DEFAULT_DIR)
+    except MetadataPullFailed as incomplete:
         typer.echo(
-            f"{result.failed_pages} metadata pages failed after retries; the library was left "
-            "unchanged and nothing was downloaded. Re-run to try again.",
+            f"{incomplete.result.failed_pages} metadata pages failed after retries; the library "
+            "was left unchanged and nothing was downloaded. Re-run to try again.",
             err=True,
         )
-        raise typer.Exit(1)
-    console.print(f"Pulled metadata for {result.written:,} iCloud items.")
+        raise typer.Exit(1) from incomplete
+    console.print(f"Pulled metadata for {found.pulled.written:,} iCloud items.")
+    photos = len(found.index.recorded) + len(found.index.missing)
+    console.print(f"iCloud assets: {photos:,}   files on drive: {found.files_on_drive:,}\n")
+    return found
 
 
 def _print_plan(plan: SyncPlan, index: BackupIndex, directory: Path) -> None:
@@ -112,39 +116,6 @@ def _print_plan(plan: SyncPlan, index: BackupIndex, directory: Path) -> None:
             console.print(f"  {path.relative_to(directory)}")
 
 
-@dataclass(frozen=True)
-class _Survey:
-    """What one look at iCloud and the drive found."""
-
-    plan: SyncPlan
-    index: BackupIndex
-    api: Any
-    # Not just the eligible ones: the comparison needs Hidden and Recently
-    # Deleted to tell a freed asset from a hidden one.
-    in_icloud: list[PhotoMetadata]
-
-
-def _survey(conn: sqlite3.Connection) -> _Survey:
-    """Refresh the metadata, then work out what the drive is missing.
-
-    Shared by plan and download so the two cannot disagree. The refresh is not
-    optional: a plan built from whatever the library last held could report the
-    drive matches iCloud having never asked iCloud anything.
-    """
-    api = authenticate()
-    _refresh_metadata(conn, api)
-
-    # A freed asset cannot be downloaded, so counting it missing would put it
-    # in every plan forever.
-    in_icloud = library.load_assets(conn, in_icloud_only=True)
-    photos = eligible(in_icloud)
-    files = scan(DEFAULT_DIR)
-    console.print(f"iCloud assets: {len(photos):,}   files on drive: {len(files):,}\n")
-
-    index = build_index(photos, files, library.backed_up(conn), DEFAULT_DIR)
-    return _Survey(build_plan(index, DEFAULT_DIR), index, api, in_icloud)
-
-
 _NOTHING_TO_DO = "\n[green]Nothing to do -- the drive already matches iCloud.[/green]"
 
 
@@ -153,10 +124,10 @@ def plan_command() -> None:
     """Report what a download would fetch, without fetching anything."""
     _require_drive(DEFAULT_DIR)
     with library.library(DEFAULT_DIR) as conn:
-        survey = _survey(conn)
-        _print_plan(survey.plan, survey.index, DEFAULT_DIR)
-        _print_icloud_comparison(conn, survey.in_icloud)
-        if survey.plan.is_empty:
+        found = _survey(conn)
+        _print_plan(found.plan, found.index, DEFAULT_DIR)
+        _print_icloud_comparison(conn, found.in_icloud)
+        if found.plan.is_empty:
             console.print(_NOTHING_TO_DO)
 
 
@@ -168,13 +139,13 @@ def download_command() -> None:
     """
     _require_drive(DEFAULT_DIR)
     with library.library(DEFAULT_DIR) as conn:
-        survey = _survey(conn)
-        _print_plan(survey.plan, survey.index, DEFAULT_DIR)
-        if survey.plan.is_empty:
+        found = _survey(conn)
+        _print_plan(found.plan, found.index, DEFAULT_DIR)
+        if found.plan.is_empty:
             console.print(_NOTHING_TO_DO)
             return
 
-        outcome = apply_plan(survey.plan, DEFAULT_DIR, conn, api=survey.api)
+        outcome = apply_plan(found.plan, DEFAULT_DIR, conn, api=found.api)
         for filename in outcome.unfetched:
             console.print(f"  [yellow]! {filename}: not found in any album[/yellow]")
         if outcome.aborted:
@@ -235,6 +206,86 @@ def verify_command() -> None:
         _print_icloud_comparison(conn, library.load_assets(conn, in_icloud_only=True))
         if damage:
             raise typer.Exit(1)
+
+
+@app.command("prune")
+def prune_command(
+    mark: str = typer.Option(
+        None, help=f"Only carry out one level of mark: {', '.join(MARKS)}. The default does both."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation and delete."),
+) -> None:
+    """Delete what the gallery marked, from iCloud and -- if marked so -- the drive.
+
+    Prints the plan and stops there unless `--yes` is given, so the reporting
+    run and the deleting run are the same code seeing the same marks.
+
+    Deleted assets go to Recently Deleted, where Apple keeps them for 30 days.
+
+    Exits non-zero if any deletion failed.
+    """
+    if mark is not None and mark not in MARKS:
+        typer.echo(f"Unknown mark {mark!r}; expected one of {list(MARKS)}.", err=True)
+        raise typer.Exit(1)
+
+    _require_drive(DEFAULT_DIR)
+    with library.library(DEFAULT_DIR) as conn:
+        plan = pruning.build_plan(conn, DEFAULT_DIR, mark=mark)
+        _print_prune_plan(plan)
+        if plan.is_empty:
+            console.print("\n[green]Nothing to delete.[/green]")
+            return
+        if not yes:
+            console.print("\n[yellow]Nothing deleted. Re-run with --yes to carry this out.[/yellow]")
+            return
+
+        outcome = pruning.apply_plan(plan, DEFAULT_DIR, conn, api=authenticate())
+
+    console.print(
+        f"\n[green]Deleted {len(outcome.freed_icloud):,} from iCloud[/green] "
+        f"({format_bytes(outcome.icloud_bytes)}), removed {len(outcome.freed_drive):,} from the drive "
+        f"({format_bytes(outcome.drive_bytes)})."
+    )
+    for asset_id, reason in outcome.failures:
+        console.print(f"  [red]! {asset_id}: {reason}[/red]")
+    if outcome.failures:
+        console.print(f"[red]{len(outcome.failures):,} failed and are still marked.[/red]")
+        raise typer.Exit(1)
+
+
+def _print_prune_plan(plan: pruning.PrunePlan) -> None:
+    """What the prune would delete, and what it will not touch."""
+    summary = Table(title="Prune plan")
+    summary.add_column("Where the bytes go")
+    summary.add_column("Assets", justify="right")
+    summary.add_column("Frees in iCloud", justify="right")
+    summary.add_column("Frees on the drive", justify="right")
+    for mark in MARKS:
+        targets = [target for target in plan.ready if target.mark == mark]
+        if not targets:
+            continue
+        drive = sum(target.drive_bytes for target in targets) if mark == queries.EVERYWHERE else 0
+        summary.add_row(
+            _MARK_LABELS[mark],
+            f"{len(targets):,}",
+            format_bytes(sum(target.icloud_bytes for target in targets if target.in_icloud)),
+            format_bytes(drive) if drive else "-",
+        )
+    console.print(summary)
+
+    if plan.blocked:
+        console.print(
+            f"\n[yellow]{len(plan.blocked):,} marked asset(s) will not be touched. They stay "
+            "marked, so fixing the reason and re-running picks them up:[/yellow]"
+        )
+        for held in plan.blocked[:40]:
+            console.print(f"  {held.target.filename}: {held.reason}")
+
+
+_MARK_LABELS = {
+    queries.ICLOUD: "iCloud only, the drive keeps its copy",
+    queries.EVERYWHERE: "iCloud and the drive, the last copy",
+}
 
 
 @app.command("import-manifest")

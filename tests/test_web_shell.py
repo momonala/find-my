@@ -1,4 +1,4 @@
-"""Tests for the shell: the landing page, the nav, and the shared routes.
+"""Tests for the shell: the nav and the shared routes.
 
 Everything here is what a page gets for free by extending base.html --
 nothing in it should know about Find My beyond its entry in src/web/nav.py.
@@ -17,19 +17,20 @@ def _current_nav_link(body: str) -> str | None:
     return match.group(1) if match else None
 
 
-def test_landing_page_lists_every_nav_entry(client):
-    body = client.get("/").data.decode()
+def test_the_nav_links_every_page(client):
+    body = client.get("/findmy").data.decode()
     for item in NAV_ITEMS:
         assert item.label in body
-        assert item.summary in body
 
 
-def test_landing_page_marks_itself_as_the_current_page(client):
-    """`aria-current` is what tells a screen reader which page this is."""
-    assert _current_nav_link(client.get("/").data.decode()) == "/"
+def test_the_root_opens_the_first_page(client):
+    """There is no landing page any more -- the nav is the only index."""
+    response = client.get("/")
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/findmy"
 
 
-def test_a_feature_page_marks_its_own_nav_entry_instead(client):
+def test_a_feature_page_marks_its_own_nav_entry(client):
     assert _current_nav_link(client.get("/findmy").data.decode()) == "/findmy"
 
 

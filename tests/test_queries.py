@@ -179,27 +179,27 @@ def test_facets_offer_only_values_the_library_actually_holds(conn: sqlite3.Conne
 def test_marking_an_asset_survives_and_can_be_cleared(conn: sqlite3.Connection) -> None:
     stock(conn)
 
-    assert queries.set_mark(conn, "clip", "delete") is True
-    assert ids(conn, Filters(mark="delete")) == ["clip"]
+    assert queries.set_mark(conn, "clip", "icloud") is True
+    assert ids(conn, Filters(mark="icloud")) == ["clip"]
 
     queries.set_mark(conn, "clip", None)
 
-    assert ids(conn, Filters(mark="delete")) == []
+    assert ids(conn, Filters(mark="icloud")) == []
 
 
 def test_re_marking_replaces_rather_than_duplicates(conn: sqlite3.Connection) -> None:
     stock(conn)
 
-    queries.set_mark(conn, "clip", "delete")
-    queries.set_mark(conn, "clip", "keep")
+    queries.set_mark(conn, "clip", "icloud")
+    queries.set_mark(conn, "clip", "everywhere")
 
     assert conn.execute("SELECT count(*) FROM marks").fetchone()[0] == 1
-    assert ids(conn, Filters(mark="keep")) == ["clip"]
+    assert ids(conn, Filters(mark="everywhere")) == ["clip"]
 
 
 def test_marking_an_asset_the_library_does_not_know_writes_nothing(conn: sqlite3.Connection) -> None:
     """The table has a foreign key, so a bad id must be refused, not raised over."""
-    assert queries.set_mark(conn, "never-existed", "delete") is False
+    assert queries.set_mark(conn, "never-existed", "icloud") is False
     assert conn.execute("SELECT count(*) FROM marks").fetchone()[0] == 0
 
 
@@ -212,7 +212,7 @@ def test_an_unknown_mark_is_refused(conn: sqlite3.Connection) -> None:
 
 def test_totals_report_the_library_and_what_is_marked(conn: sqlite3.Connection) -> None:
     stock(conn)
-    queries.set_mark(conn, "still-2024", "delete")
+    queries.set_mark(conn, "still-2024", "icloud")
 
     found = queries.totals(conn)
 

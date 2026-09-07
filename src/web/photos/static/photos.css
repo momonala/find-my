@@ -1,6 +1,44 @@
 /* The gallery: a filter bar over a thumbnail grid. Every value here comes from
    tokens.css, so the page follows the shell rather than theming itself. */
 
+.photos-page {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+/* The summary sits left, the buttons right. They are not filters -- they
+   change the library rather than the view of it -- so they live up here. */
+.photos-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.photos-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* Turning while the sync runs is the only sign it is still going: the work is
+   minutes of downloading with nothing on screen to show for it until it ends. */
+.refresh-icon {
+  display: block;
+}
+
+[data-busy="true"] .refresh-icon {
+  animation: refresh-spin var(--duration-refresh-spin) linear infinite;
+}
+
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .photos-summary {
   margin: 0;
   color: var(--color-text-muted);
@@ -55,10 +93,20 @@
 }
 
 /* The one accent on the page, and it maps to real state: this asset is
-   flagged for deletion from iCloud. */
-.photo-card[data-mark="delete"] {
+   flagged for deletion. Solid where the drive keeps its copy, dashed where the
+   mark takes the last one -- a difference worth seeing from across the grid. */
+.photo-card[data-mark] {
   outline: 2px solid var(--color-danger);
   outline-offset: -2px;
+}
+
+.photo-card[data-mark="everywhere"] {
+  outline-style: dashed;
+}
+
+/* Holds a tile's place in the grid while the query that will fill it runs. */
+.photo-skeleton {
+  pointer-events: none;
 }
 
 .photo-button {
@@ -73,12 +121,44 @@
   cursor: pointer;
 }
 
-.photo-button img {
+/* The square a picture will land in, claimed before it arrives. A thumbnail is
+   a ~0.3s conversion on the server, and a grid that reflowed as each one landed
+   would move under the pointer. */
+.photo-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
   width: 100%;
   aspect-ratio: 1;
-  object-fit: cover;
+  overflow: hidden;
   background: var(--color-bg);
+}
+
+.photo-frame.is-pending,
+.photo-caption.is-pending {
+  background: var(--color-surface-pending);
+  animation: pending-pulse var(--duration-pending-pulse) ease-in-out infinite;
+}
+
+/* Only halfway down and back: a tile that pulsed to nothing would read as
+   broken rather than as busy. */
+@keyframes pending-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.photo-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
+  opacity: 0;
+  transition: opacity var(--duration-quick) var(--ease-smooth-out);
+}
+
+.photo-thumb.is-loaded {
+  opacity: 1;
 }
 
 .photo-placeholder {
@@ -98,6 +178,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.photo-caption.is-pending {
+  height: 1.6em;
+  border-radius: var(--radius);
+  margin: var(--space-1) var(--space-2) var(--space-2);
+  padding: 0;
 }
 
 .photo-button:hover .photo-caption,
@@ -146,6 +233,56 @@
   overflow-wrap: anywhere;
 }
 
+/* Two levels reading as one control, so the choice between them is the
+   obvious thing to make and neither looks like the default. */
+.detail-marks {
+  display: flex;
+  gap: 1px;
+}
+
+.detail-marks .btn-floating:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.detail-marks .btn-floating:last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.detail-mark[aria-pressed="true"] {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #ffffff;
+}
+
+.prune-confirm {
+  max-width: 32rem;
+}
+
+/* Scoped to [open] for the same reason `.photo-detail[open]` is: an
+   unconditional `display` leaves the closed dialog on the page, where it is
+   invisible but still swallowing clicks on the controls underneath it. */
+.prune-confirm[open] {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.prune-confirm h2 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.prune-lines {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.prune-confirm .detail-buttons {
+  justify-content: flex-end;
+}
+
 .detail-buttons {
   display: flex;
   gap: var(--space-2);
@@ -161,11 +298,22 @@
   border-radius: var(--radius);
 }
 
+.detail-figure.is-pending {
+  background: var(--color-surface-pending);
+  animation: pending-pulse var(--duration-pending-pulse) ease-in-out infinite;
+}
+
 .detail-figure img {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
   border-radius: var(--radius);
+  opacity: 0;
+  transition: opacity var(--duration-quick) var(--ease-smooth-out);
+}
+
+.detail-figure img.is-loaded {
+  opacity: 1;
 }
 
 .detail-meta {
@@ -224,5 +372,16 @@
   .photo-detail[open] {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 2fr) minmax(0, 1fr);
+  }
+}
+
+/* A pulsing tile and a spinning icon are both status, not decoration, so they
+   stop rather than being replaced with something quieter. */
+@media (prefers-reduced-motion: reduce) {
+  .photo-frame.is-pending,
+  .photo-caption.is-pending,
+  .detail-figure.is-pending,
+  [data-busy="true"] .refresh-icon {
+    animation: none;
   }
 }

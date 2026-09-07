@@ -21,7 +21,10 @@ from icloud_photo_metadata import library
 # asset that has never been backed up still lists.
 _RESOURCES = "LEFT JOIN asset_resources r ON r.asset_id = a.id AND r.kind = 'original'"
 _FILES = "LEFT JOIN files f ON f.asset_id = a.id AND f.kind = 'original'"
-_MARKS = "LEFT JOIN marks m ON m.asset_id = a.id"
+# Pending marks only, so `mark` means the same thing everywhere: a decision
+# still waiting. A carried-out one stays in the table as the record that it
+# happened, but it must not outline a card or answer a `mark=` filter.
+_MARKS = "LEFT JOIN marks m ON m.asset_id = a.id AND m.executed_at IS NULL"
 
 _JOINS = f"FROM assets a {_RESOURCES} {_FILES} {_MARKS}"
 
@@ -49,7 +52,23 @@ SORTS: dict[str, str] = {
     "longest": "a.duration_seconds DESC NULLS LAST, a.id DESC",
 }
 
-MARKS = ("delete", "keep")
+# What a mark says to do with an asset's bytes. `icloud` frees the iCloud copy
+# and leaves the drive's; `everywhere` takes both and is the only one that lets
+# go of the last copy.
+ICLOUD = "icloud"
+EVERYWHERE = "everywhere"
+MARKS = (ICLOUD, EVERYWHERE)
+
+# Not a mark anything can carry: the filter value for "marked, either way",
+# which is the question you actually ask before pruning.
+ANY_MARK = "any"
+MARK_FILTERS = (ANY_MARK, *MARKS)
+
+# Apple's holding pen, not part of the library. A prune moves an asset here and
+# Apple keeps it 30 days, so the next pull files it back under this album with
+# no copy on the drive -- a tile the gallery can draw nothing in, for a photo
+# you just deleted. Naming the album in the filter is how you look inside it.
+TRASH_ALBUM = "Recently Deleted"
 
 
 @dataclass(frozen=True)
@@ -69,6 +88,7 @@ class Filters:
     backed_up: bool | None = None
     is_favorite: bool | None = None
     has_location: bool | None = None
+    # One of `MARK_FILTERS`, so a caller can ask for either level or for both.
     mark: str | None = None
     min_bytes: int | None = None
     min_duration: float | None = None
@@ -141,18 +161,22 @@ def totals(conn: sqlite3.Connection) -> dict[str, int]:
                coalesce(sum(r.size_bytes), 0) AS bytes
         FROM assets a LEFT JOIN asset_resources r ON r.asset_id = a.id AND r.kind = 'original'
         """).fetchone()
+    # Pending marks only: an executed one is history, not a to-do list.
     marked = conn.execute("""
-        SELECT count(*) AS n, coalesce(sum(r.size_bytes), 0) AS bytes
+        SELECT m.mark, count(*) AS n, coalesce(sum(r.size_bytes), 0) AS bytes
         FROM marks m
         LEFT JOIN asset_resources r ON r.asset_id = m.asset_id AND r.kind = 'original'
-        WHERE m.mark = 'delete'
-        """).fetchone()
+        WHERE m.executed_at IS NULL
+        GROUP BY m.mark
+        """).fetchall()
+    by_mark = {item["mark"]: item for item in marked}
     return {
         "assets": row["assets"],
         "in_icloud": row["in_icloud"],
         "bytes": row["bytes"],
-        "marked": marked["n"],
-        "marked_bytes": marked["bytes"],
+        "marked": sum(item["n"] for item in marked),
+        "marked_bytes": sum(item["bytes"] for item in marked),
+        **{f"marked_{mark}": by_mark[mark]["n"] if mark in by_mark else 0 for mark in MARKS},
     }
 
 
@@ -187,9 +211,12 @@ def original_path(conn: sqlite3.Connection, asset_id: str) -> str | None:
 
 
 def set_mark(conn: sqlite3.Connection, asset_id: str, mark: str | None) -> bool:
-    """Flag an asset for deletion from iCloud, or clear the flag with None.
+    """Flag an asset for deletion at one of `MARKS`, or clear the flag with None.
 
-    Nothing acts on this yet; it records the decision.
+    Records the decision. `prune.py` is what carries it out.
+
+    Re-marking clears `executed_at`: an asset deleted from iCloud and marked
+    again is a fresh decision, not the old one repeated.
 
     Returns:
         Whether the asset exists. False means nothing was written.
@@ -208,10 +235,39 @@ def set_mark(conn: sqlite3.Connection, asset_id: str, mark: str | None) -> bool:
         else:
             conn.execute(
                 "INSERT INTO marks (asset_id, mark, marked_at) VALUES (?, ?, datetime('now'))"
-                " ON CONFLICT(asset_id) DO UPDATE SET mark = excluded.mark, marked_at = excluded.marked_at",
+                " ON CONFLICT(asset_id) DO UPDATE SET mark = excluded.mark,"
+                " marked_at = excluded.marked_at, executed_at = NULL",
                 (asset_id, mark),
             )
     return True
+
+
+def pending_marks(conn: sqlite3.Connection, mark: str | None = None) -> list[dict[str, Any]]:
+    """Every mark still waiting to be carried out, oldest decision first.
+
+    Args:
+        mark: Restrict to one of `MARKS`. The default returns both levels.
+    """
+    where = "AND m.mark = ?" if mark is not None else ""
+    rows = conn.execute(
+        f"""
+        SELECT m.asset_id, m.mark, m.marked_at, a.filename, a.source_album, a.in_icloud,
+               a.icloud_bytes, r.size_bytes AS original_bytes
+        FROM marks m
+        JOIN assets a ON a.id = m.asset_id
+        LEFT JOIN asset_resources r ON r.asset_id = m.asset_id AND r.kind = 'original'
+        WHERE m.executed_at IS NULL {where}
+        ORDER BY m.marked_at, m.asset_id
+        """,
+        (mark,) if mark is not None else (),
+    )
+    return [dict(row) for row in rows]
+
+
+def record_executed(conn: sqlite3.Connection, asset_id: str) -> None:
+    """Stamp a mark as carried out, so it stops counting as a to-do."""
+    with conn:
+        conn.execute("UPDATE marks SET executed_at = datetime('now') WHERE asset_id = ?", (asset_id,))
 
 
 def _counts(conn: sqlite3.Connection, sql: str) -> list[dict[str, Any]]:
@@ -238,6 +294,8 @@ def _where(filters: Filters) -> tuple[str, str, list[Any]]:
         add("a.filename LIKE ?", f"%{filters.search}%")
     if filters.album:
         add("a.source_album = ?", filters.album)
+    else:
+        add("a.source_album != ?", TRASH_ALBUM)
     if filters.item_type:
         add("a.item_type = ?", filters.item_type)
     if filters.camera_model:
@@ -252,7 +310,9 @@ def _where(filters: Filters) -> tuple[str, str, list[Any]]:
         add("a.latitude IS NOT NULL" if filters.has_location else "a.latitude IS NULL")
     if filters.backed_up is not None:
         add("f.relative_path IS NOT NULL" if filters.backed_up else "f.relative_path IS NULL", join=_FILES)
-    if filters.mark is not None:
+    if filters.mark == ANY_MARK:
+        add("m.mark IS NOT NULL", join=_MARKS)
+    elif filters.mark is not None:
         add("m.mark = ?", filters.mark, join=_MARKS)
     if filters.min_bytes is not None:
         add("r.size_bytes >= ?", filters.min_bytes, join=_RESOURCES)

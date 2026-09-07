@@ -30,9 +30,15 @@ uv run --group photos python -m icloud_photo_metadata download
 
 # Check the backup is intact. Do this before deleting anything from iCloud
 uv run --group photos python -m icloud_photo_metadata verify
+
+# What would deleting the marked assets take? Prints the plan and stops
+uv run --group photos python -m icloud_photo_metadata prune
+
+# Carry it out
+uv run --group photos python -m icloud_photo_metadata prune --yes
 ```
 
-There is a fourth command, `import-manifest`, which you run once on a drive that predates the database
+There is a fifth command, `import-manifest`, which you run once on a drive that predates the database
 and then never again.
 
 Nothing is configurable. The backup directory is `DEFAULT_DIR` in `backup.py`, metadata always refreshes
@@ -40,7 +46,7 @@ before planning, and `verify` always hashes. A flag on any of those would only b
 different answer to the same question.
 
 `plan` and `download` do identical work and differ only in whether they carry it out, so the plan you
-read is the plan that runs. Both refresh metadata from iCloud first, which is why neither can ever report
+read is the plan that runs. `prune` is the same shape: without `--yes` it prints and stops. Both refresh metadata from iCloud first, which is why neither can ever report
 against a stale view.
 
 Figures throughout come from one real library: **9,711 assets, 26.6 GB of originals**, of which 9,618 are
@@ -78,7 +84,7 @@ One SQLite database, sitting on the drive next to the media it describes. 53.5 M
 | `assets` | One row per asset iCloud has ever shown us, with `in_icloud` saying whether it still does |
 | `asset_resources` | Per-variant size, dimensions and Apple checksum: original, medium, thumb, video halves |
 | `files` | Asset id and kind, mapped to a path on the drive, its size and its sha256 |
-| `marks` | Assets you have flagged for deletion from iCloud |
+| `marks` | What you flagged for deletion, at which level, and when `prune` carried it out |
 | `album_counts` | What iCloud reported for each album at the last pull, the baseline for the next one |
 | `meta` | When the last pull happened |
 
@@ -105,6 +111,7 @@ icloud_photo_metadata/
 ├── backup.py             the pipeline: index, plan, apply
 ├── library.py            the database on the drive: schema, connection, every query
 ├── queries.py            reads for the gallery: filter, sort, page, facet
+├── prune.py              carrying the marks out: what may be deleted, and doing it
 ├── drive.py              list, stat, hash. Nothing else touches the filesystem
 ├── icloud_source.py      the only module that knows about pyicloud and CloudKit
 ├── pull_metadata.py      refreshing the library's view of iCloud
@@ -203,12 +210,25 @@ than the connection, so a pool only made every dropped connection everybody's pr
 The drive is exFAT and removable. WAL would strand `-wal` and `-shm` files beside the media if it were
 unplugged mid-write, and with exactly one writer its concurrency buys nothing.
 
-### No migration system
+### Migrations only for the tables that cannot be re-pulled
 
 `assets` and `asset_resources` are derived and can always be re-pulled in about 80 s, so a schema change
-there is a rebuild rather than a migration. `PRAGMA user_version` refuses to open a library written by a
-different version, which is the only guard `files` and `marks` need until one of them actually changes
-shape.
+there is a rebuild rather than a migration. `files` and `marks` are not derived from anything: what this
+drive holds and what you decided about it exist nowhere else.
+
+So there is no framework, just `_MIGRATIONS` in `library.py` -- one SQL block per version step, run inside
+the caller's transaction. `PRAGMA user_version` still refuses a library from a version this one cannot
+reach. The one step so far is v1 to v2, which split `marks` from a single `delete` into the two levels
+below and added `executed_at`.
+
+**`_SCHEMA` only builds a library, it never reshapes one.** Opening one that is already at
+`SCHEMA_VERSION` runs no DDL, stamps nothing and opens no transaction. The drive is exFAT over USB, and
+re-running the schema means a journal and two fsyncs -- 10 ms typical, just under two seconds at the tail,
+paid once per marked photo by a gallery that opens a connection per click. The cost of that shortcut is
+that every schema change needs a `_MIGRATIONS` step, the additive ones included.
+
+A read-only open migrates too, by opening a writable connection first. It costs one `user_version` read on
+a page view with nothing to do, and it is what stops the gallery reading v1 rows through v2 code.
 
 ### Failures re-open the session
 
@@ -236,6 +256,19 @@ restore with `sqlite3 new.db < library.db.dump`, or failing that, grep it.
 A failed verify deliberately skips the dump. Overwriting the copy taken while the library was whole with a
 snapshot of a damaged one would be worse than having no copy.
 
+### A prune fetches by record name, a download pages albums
+
+Both need the live pyicloud object behind an id, and they get it two different ways on purpose.
+
+A download wants most of the library, so paging albums newest-first is the cheapest way to reach hundreds
+of assets at once. A prune wants three photos, and one of them is from 2018: paging would walk everything
+newer to reach it.
+
+The obvious answer, `album._get_photo(id)`, is a trap. Its indexed lookup misses on a smart album, and it
+falls back to iterating the album -- measured at **289 s** for one asset against this library. Asking
+CloudKit for the record itself takes **0.26 s** and does not care how old the asset is, so `fetch_asset`
+does that: `records/lookup` for the `CPLAsset`, then its `masterRef` for the `CPLMaster`.
+
 ### `icloud_source.py` quarantines pyicloud
 
 Reading this metadata means leaning on private methods, raw CKRecord fields, and the `mediaMetaDataEnc`
@@ -246,12 +279,42 @@ EXIF blob that pyicloud never decodes. Any patch release could move all of it. T
 
 `/photos` in the web UI is a thumbnail grid you can filter by camera, year, album, kind, size, video
 length, favourite, location, and whether an asset is still in iCloud or backed up at all. Clicking a
-thumbnail opens its EXIF. Marking one writes a row to `marks` and does nothing else, since deleting from
-iCloud is still something you do by hand in the Photos app.
+thumbnail opens its EXIF, and marks it for deletion at one of two levels.
 
 The page lives in `src/web/photos/` and its queries in `queries.py`. Both need the drive mounted, and the
 routes answer 503 when it is not, because an unplugged USB disk is a state to explain rather than a server
 error.
+
+**A mark says where the bytes should stop existing.** `iCloud` frees the iCloud copy and leaves the
+drive's, which is the whole point of keeping a backup. `Everywhere` takes the drive's copy too, and is the
+only thing in this tool that lets go of the last copy of a photo. Pressing the level an asset already
+carries clears it; "not marked" has no button because it is not a decision worth recording.
+
+**The filter bar can show what you marked**, either level or both, which is the question worth asking
+before pruning.
+
+**Marking does not recount the library.** The mark route answers with nothing but the mark. Totals mean a
+scan of all 9,711 assets, which is 18 ms with the drive's pages cached and was measured at 3.7 s without
+-- on the one control a person clicks over and over. The page moves its own count by the one mark that
+changed.
+
+**Nothing is deleted until a prune runs**, from the gallery's button or from `prune --yes`. Both build the
+same plan and both refuse the same things. An `iCloud` mark is skipped unless the drive holds every file
+the library recorded for that asset, at the recorded size, hashing to the recorded digest -- a skipped
+asset stays marked, so fixing the reason and re-running picks it up. `Everywhere` is not gated at all:
+discarding the backup is the request.
+
+**A deleted asset goes to Recently Deleted**, where Apple keeps it for 30 days. The prune sets `isDeleted`,
+which is exactly what the Photos app's delete does. So an `iCloud` prune is recoverable for a month, and an
+`everywhere` prune is recoverable for a month minus the drive's copy, which is gone for good.
+
+**A pruned asset keeps its row.** `in_icloud` goes to 0 the moment the delete lands rather than at the next
+pull, and an `everywhere` prune drops the `files` rows with the files. The metadata outlives both copies,
+which is the point of the library being on the drive.
+
+**The gallery's prune runs on a background thread**, the same way the refresh does: each asset costs a
+CloudKit lookup and a write, and verifying one costs a hash off a USB disk, so a few dozen marks already
+outlast a request. `src/web/photos/jobs.py` is what they share.
 
 **Thumbnails are built on request and cached under `data/photo-thumbs/`.** 76% of the library is HEIC,
 which only Safari renders, and an original is a 4032×3024 file on a USB disk. Each conversion takes about
@@ -271,27 +334,29 @@ video, which is the ffmpeg dependency this tool deliberately does without.
   Photos app and the backup holds what the camera captured, not what you see.
 - **HEIC is stored as-is.** 7,300 files. Converting would break both the hash and the "original bytes"
   promise, so finding a decoder in 2040 is your problem.
-- **Hidden is never backed up**, so those 92 assets and 2.5 GB cannot safely be deleted from iCloud.
+- **Hidden is never backed up**, so those 92 assets and 2.5 GB cannot be marked `iCloud`: there is no
+  copy to fall back on, and the prune refuses them. `Everywhere` will still delete them.
 - **There are no tags.** `keywords`, `people`, `title` and `description` come back empty for all 9,711
   assets. Apple's CloudKit does not expose library tags or face data here. This is not a decoding bug: the
   same path produces 6,184 GPS fixes.
-- **`marks` is not acted on yet.** The table exists and persists what you flag. Doing something with it is
-  a later job.
+- **A prune deletes one asset at a time.** No batching: CloudKit will take a batch, but a partial batch
+  failure is far harder to report honestly than a list of per-asset outcomes.
 - **`verify` does not refresh metadata.** It reads whatever the last pull left and tells you how old it is.
 - **An edit to an old photo will not show up.** Favourite or retitle something from 2018 and the
   incremental pull walks nowhere near it. Empty `album_counts` to force a full pull.
 - **The first big download is slow.** Roughly 2 to 5 hours for 25 GB, serial, resumable at any point.
   Steady state after that is a handful of new assets per run.
 - **Reaching an old asset is slow.** Albums page newest-first, so something taken today is found in the
-  first request and something from years ago means walking most of the library.
-- **Nothing prunes.** The drive only grows.
+  first request and something from years ago means walking most of the library. This is a download
+  problem only; a prune fetches by record name and does not care how old an asset is.
+- **Only a mark shrinks the drive.** Nothing prunes on its own; the drive grows until you say otherwise.
 
 ## What is tested
 
 ```bash
 uv run --group photos pytest tests/test_backup.py tests/test_library.py tests/test_drive.py \
     tests/test_pull_metadata.py tests/test_icloud_source.py tests/test_migrate_manifest.py \
-    tests/test_queries.py tests/test_photos_web.py
+    tests/test_queries.py tests/test_prune.py tests/test_photos_web.py
 ```
 
 The decision layer runs on plain values. Fakes are reserved for the two real boundaries, iCloud and the
