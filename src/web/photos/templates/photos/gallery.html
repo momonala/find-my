@@ -10,12 +10,66 @@
 <main class="page photos-page">
   {#- The nav bar names the page; this keeps the document outline intact. -#}
   <h1 class="visually-hidden">Photos</h1>
-  <div class="photos-header">
-    <p id="library-summary" class="photos-summary" hidden></p>
-    {#- Not a filter, so it sits outside the filter form: it changes the
-        library rather than the view of it. -#}
-    <div class="photos-header-actions">
-      <p id="job-status" class="photos-summary" role="status"></p>
+  <p id="library-summary" class="photos-summary" hidden></p>
+
+  {#- One row: every filter, then the two buttons that change the library
+      rather than the view of it. Those stay outside the form -- nothing they
+      do belongs in the query string -- and only share its line. -#}
+  <div class="photos-toolbar">
+    {#- No labels: each control's resting option says what it filters, and
+        shows the chosen value once there is one. -#}
+    <form id="filters" class="photos-filters" aria-label="Filter the library">
+      <input type="search" name="search" class="dialog-input filter-control filter-search"
+             placeholder="Filename" aria-label="Search filenames" autocomplete="off">
+      <select name="camera" class="dialog-select filter-control" aria-label="Camera">
+        <option value="">Camera (any)</option>
+      </select>
+      <select name="year" class="dialog-select filter-control" aria-label="Year">
+        <option value="">Year (any)</option>
+      </select>
+      <select name="album" class="dialog-select filter-control" aria-label="Album">
+        <option value="">Album (any)</option>
+      </select>
+      <select name="type" class="dialog-select filter-control" aria-label="Kind">
+        <option value="">Kind (any)</option>
+      </select>
+      <select name="min_bytes" class="dialog-select filter-control" aria-label="Minimum file size">
+        <option value="">Any size</option>
+        <option value="1000000">1 MB or more</option>
+        <option value="5000000">5 MB or more</option>
+        <option value="10000000">10 MB or more</option>
+        <option value="20000000">20 MB or more</option>
+      </select>
+      <select name="min_duration" class="dialog-select filter-control" aria-label="Minimum video length">
+        <option value="">Any length</option>
+        <option value="5">5s or longer</option>
+        <option value="30">30s or longer</option>
+        <option value="60">1m or longer</option>
+      </select>
+      <select name="sort" class="dialog-select filter-control" aria-label="Sort order">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="largest">Largest first</option>
+        <option value="smallest">Smallest first</option>
+        <option value="longest">Longest video</option>
+      </select>
+      <select id="per-row" class="dialog-select filter-control" aria-label="Images per row">
+        <option value="4">4 per row</option>
+        <option value="6">6 per row</option>
+        <option value="8" selected>8 per row</option>
+        <option value="10">10 per row</option>
+        <option value="12">12 per row</option>
+        <option value="16">16 per row</option>
+      </select>
+      <select name="mark" class="dialog-select filter-control" aria-label="Marked for deletion">
+        <option value="">Mark (any)</option>
+        <option value="any">Marked, either level</option>
+        <option value="icloud">Marked: iCloud only</option>
+        <option value="everywhere">Marked: everywhere</option>
+      </select>
+    </form>
+
+    <div class="photos-toolbar-actions">
       <button type="button" id="prune" class="btn-floating btn-danger" hidden></button>
       <button type="button" id="refresh" class="btn-floating btn-icon"
               title="Pull new photos from iCloud" aria-label="Pull new photos from iCloud">
@@ -23,59 +77,6 @@
       </button>
     </div>
   </div>
-
-  {#- No labels: each control's resting option says what it filters, and shows
-      the chosen value once there is one. -#}
-  <form id="filters" class="photos-filters" aria-label="Filter the library">
-    <input type="search" name="search" class="dialog-input filter-control filter-search"
-           placeholder="Filename" aria-label="Search filenames" autocomplete="off">
-    <select name="camera" class="dialog-select filter-control" aria-label="Camera">
-      <option value="">Camera (any)</option>
-    </select>
-    <select name="year" class="dialog-select filter-control" aria-label="Year">
-      <option value="">Year (any)</option>
-    </select>
-    <select name="album" class="dialog-select filter-control" aria-label="Album">
-      <option value="">Album (any)</option>
-    </select>
-    <select name="type" class="dialog-select filter-control" aria-label="Kind">
-      <option value="">Kind (any)</option>
-    </select>
-    <select name="min_bytes" class="dialog-select filter-control" aria-label="Minimum file size">
-      <option value="">Any size</option>
-      <option value="1000000">1 MB or more</option>
-      <option value="5000000">5 MB or more</option>
-      <option value="10000000">10 MB or more</option>
-      <option value="20000000">20 MB or more</option>
-    </select>
-    <select name="min_duration" class="dialog-select filter-control" aria-label="Minimum video length">
-      <option value="">Any length</option>
-      <option value="5">5s or longer</option>
-      <option value="30">30s or longer</option>
-      <option value="60">1m or longer</option>
-    </select>
-    <select name="sort" class="dialog-select filter-control" aria-label="Sort order">
-      <option value="newest">Newest first</option>
-      <option value="oldest">Oldest first</option>
-      <option value="largest">Largest first</option>
-      <option value="smallest">Smallest first</option>
-      <option value="longest">Longest video</option>
-    </select>
-    <select id="per-row" class="dialog-select filter-control" aria-label="Images per row">
-      <option value="4">4 per row</option>
-      <option value="6">6 per row</option>
-      <option value="8" selected>8 per row</option>
-      <option value="10">10 per row</option>
-      <option value="12">12 per row</option>
-      <option value="16">16 per row</option>
-    </select>
-    <select name="mark" class="dialog-select filter-control" aria-label="Marked for deletion">
-      <option value="">Mark (any)</option>
-      <option value="any">Marked, either level</option>
-      <option value="icloud">Marked: iCloud only</option>
-      <option value="everywhere">Marked: everywhere</option>
-    </select>
-  </form>
 
   <p id="result-count" class="photos-summary" role="status"></p>
 

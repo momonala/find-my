@@ -30,6 +30,10 @@
     <p id="error-banner" class="error-banner" role="alert" hidden></p>
   </div>
 
+  {#- Passing news -- a job's phase, what it managed -- reported by
+      static/toast.js rather than held in a page's own chrome. -#}
+  <p id="toast" class="toast" role="status" hidden></p>
+
   {% block content %}{% endblock %}
   {% block scripts %}{% endblock %}
 </body>

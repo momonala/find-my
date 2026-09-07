@@ -8,6 +8,7 @@
 // one holds its place until its own picture arrives.
 
 import { showError, clearError, showFatalError } from "/static/banners.js";
+import { showToast, hideToast } from "/static/toast.js";
 import { formatBytes, formatDate } from "/static/format.js";
 import { fetchJson } from "/static/http.js";
 
@@ -31,7 +32,6 @@ const detail = document.getElementById("detail");
 const refreshButton = document.getElementById("refresh");
 const pruneButton = document.getElementById("prune");
 const pruneConfirm = document.getElementById("prune-confirm");
-const jobStatus = document.getElementById("job-status");
 const markButtons = [...document.querySelectorAll(".detail-mark")];
 
 // What the two levels of mark mean, in the order the confirmation lists them.
@@ -501,15 +501,14 @@ function job(url, button) {
   // would be a second full page of thumbnails for nothing.
   let watched = false;
 
-  // The phase while it runs, what it managed once it stops. A failure is the
-  // page's to report, so it goes in the banner every other one uses.
+  // The phase goes in a toast while it runs, and stays there until the job
+  // says something else: a sync is minutes long and this is the only account
+  // of where it has got to. The button it was started from spins meanwhile.
   function show(state) {
     const running = state.status === "running";
     button.dataset.busy = String(running);
     button.disabled = running;
-    if (running) jobStatus.textContent = state.phase ? `${state.phase}…` : "";
-    else if (state.status === "done") jobStatus.textContent = state.message;
-    if (state.status === "error") showError(state.message);
+    if (running) showToast(state.phase ? `${state.phase}…` : "Working…", { sticky: true });
   }
 
   async function poll() {
@@ -528,9 +527,18 @@ function job(url, button) {
       setTimeout(poll, REFRESH_POLL_MS);
       return;
     }
+    // A failure is the page's to report whether or not this page watched the
+    // run: it is why the library did not change, and it is still true on a
+    // reload. What a finished run managed is news, so it is only said to the
+    // page that was watching, and only for as long as a toast lasts.
+    if (state.status === "error") {
+      hideToast();
+      showError(state.message);
+    }
     if (watched) {
       watched = false;
       if (state.status === "done") {
+        showToast(state.message);
         await loadFacets();
         await loadPage();
       }

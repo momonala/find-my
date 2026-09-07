@@ -172,6 +172,52 @@ input:focus-visible {
   }
 }
 
+/* Bottom centre, clear of the controls at the top of every page: a toast says
+   what a job is doing, and reaching for the button that started it should not
+   mean reading around the line the job just put there.
+
+   It animates both ways, which the banners above cannot: they are shown and
+   hidden with `hidden` alone, while `display` here is transitioned with
+   allow-discrete, so the toast stays in the top of the frame long enough to
+   fade out instead of blinking away. */
+.toast {
+  position: fixed;
+  bottom: var(--space-5);
+  left: 50%;
+  z-index: 10;
+  margin: 0;
+  max-width: min(28rem, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-md);
+  font-size: 0.85rem;
+  opacity: 0;
+  transform: translate(-50%, var(--space-2));
+  transition:
+    opacity var(--duration-quick) var(--ease-smooth-out),
+    transform var(--duration-quick) var(--ease-smooth-out),
+    display var(--duration-quick) allow-discrete;
+}
+
+.toast:not([hidden]) {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition:
+    opacity var(--duration-fast) var(--ease-smooth-out),
+    transform var(--duration-fast) var(--ease-smooth-out),
+    display var(--duration-fast) allow-discrete;
+}
+
+@starting-style {
+  .toast:not([hidden]) {
+    opacity: 0;
+    transform: translate(-50%, var(--space-2));
+  }
+}
+
 /* --- Dialogs -------------------------------------------------------------
    The icon editor, map style picker and alert editor are all <dialog>s built
    by the shared helpers in dashboard.js, so they share one set of styles here.

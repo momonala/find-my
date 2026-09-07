@@ -7,20 +7,23 @@
   align-content: start;
 }
 
-/* The summary sits left, the buttons right. They are not filters -- they
-   change the library rather than the view of it -- so they live up here. */
-.photos-header {
+/* One row: filters from the left, the two library buttons pinned right. The
+   rule under it belongs to the row as a whole rather than to the form, so the
+   buttons sit above the same line the filters do. */
+.photos-toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex-wrap: wrap;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
 }
 
-.photos-header-actions {
+.photos-toolbar-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 /* Turning while the sync runs is the only sign it is still going: the work is
@@ -45,34 +48,37 @@
   font-size: 0.875rem;
 }
 
+/* No wrapping: the filters are one line, and a window too narrow to hold them
+   scrolls that line rather than growing a second one that pushes the grid
+   down. `min-width: 0` is what lets the row shrink to be scrolled at all. */
 .photos-filters {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-border);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  /* `overflow-x: auto` makes the vertical axis scroll too, which would crop a
+     focus ring drawn just outside a control. This is the room it needs, and
+     it also keeps the scrollbar off the row's bottom edge. */
+  padding-block: var(--space-1);
 }
 
-/* Sized to their own content so the row packs tight, then capped: a camera
-   list holds names long enough to push everything else off the line. */
+/* Sized to their own content so the row packs tight, then capped at both ends:
+   a camera list holds names long enough to push everything else off the line,
+   and a control squeezed under 6rem stops saying what it filters. */
 .filter-control {
+  flex: 0 1 auto;
   width: auto;
+  min-width: 6rem;
   max-width: 11rem;
   font-size: 0.8125rem;
   padding: var(--space-1) var(--space-2);
 }
 
 .filter-search {
+  flex: 0 1 8rem;
   width: 8rem;
-}
-
-.filter-flag {
-  height: auto;
-  padding: var(--space-1) var(--space-2);
-  font-size: 0.8125rem;
-  box-shadow: none;
-  backdrop-filter: none;
 }
 
 #result-count {
