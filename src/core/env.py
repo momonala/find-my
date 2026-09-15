@@ -11,7 +11,7 @@ load_dotenv(REPO_ROOT / ".env")
 ICLOUD_USERNAME = os.environ.get("ICLOUD_USERNAME", "")
 ICLOUD_PASSWORD = os.environ.get("ICLOUD_PASSWORD", "")
 
-# Optional shared secret for the API's one write route (PUT /locations/<id>/icon).
+# Optional shared secret gating the API's write routes (icon and alert config).
 # Unset leaves writes open, which is fine for the localhost default; set it
 # before exposing the dashboard on a network or through a tunnel.
 API_WRITE_TOKEN = os.environ.get("API_WRITE_TOKEN", "")

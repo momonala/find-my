@@ -75,7 +75,8 @@
    it needs no scrim or backdrop-filter to stay legible. */
 .last-updated {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -98,10 +99,9 @@
   text-align: center;
   padding: var(--space-3) var(--space-4);
   color: var(--color-text-muted);
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   background: var(--color-surface-translucent);
   backdrop-filter: blur(14px);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   pointer-events: none;
@@ -134,7 +134,6 @@
   flex-direction: column;
   background: var(--color-surface-translucent);
   backdrop-filter: blur(14px);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   overflow: hidden;
@@ -148,7 +147,7 @@
   margin: var(--space-3);
   padding: 2px;
   background: var(--color-bg);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 /* Anchored at left:0 -- the same origin offsetLeft is measured from, so JS can
@@ -161,7 +160,7 @@
   left: 0;
   width: 0;
   background: var(--color-surface);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transform: translateX(0);
   transition:
     transform var(--duration-fast) var(--ease-smooth-out),
@@ -181,8 +180,8 @@
   background: none;
   border: none;
   padding: var(--space-2) var(--space-2);
-  border-radius: 999px;
-  font-size: 0.85rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -222,8 +221,8 @@
   background: none;
   border: none;
   padding: 2px var(--space-2);
-  border-radius: 999px;
-  font-size: 0.72rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -241,7 +240,7 @@
 }
 
 .sort-indicator {
-  font-size: 0.65rem;
+  font-size: var(--text-xs);
   color: var(--color-accent);
 }
 
@@ -257,7 +256,7 @@
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius);
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   transition: background-color var(--duration-quick) var(--ease-smooth-out);
 }
 
@@ -343,10 +342,10 @@
   /* Deliberately not colored by device identity -- that's what the row's
      color bar is for. A flat neutral shade a touch lighter than the sidebar
      background keeps this reading as a plain icon slot. */
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-overlay-fill);
   color: var(--color-text);
   font-weight: 700;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .avatar-button:hover .avatar {
@@ -362,8 +361,8 @@
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 0.85rem;
-  border: 2px solid #ffffff;
+  font-size: var(--text-sm);
+  border: 2px solid var(--color-white);
   box-shadow: var(--shadow-md);
 }
 
@@ -393,7 +392,7 @@
 
 .device-name {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -440,8 +439,9 @@
 }
 
 .device-subtitle {
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -451,8 +451,9 @@
    alertTriggeredText() in dashboard.js), which is fixed-width and
    ellipsis-truncated and has no room to share. */
 .device-triggered {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -463,13 +464,13 @@
   margin: 0;
   padding: var(--space-4) var(--space-3);
   color: var(--color-text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
   text-align: center;
 }
 
 /* Holds a single emoji, so it gets more room than a normal field. */
 .icon-dialog-input {
-  font-size: 1.1rem;
+  font-size: var(--text-lg);
   padding: var(--space-2) var(--space-3);
 }
 
@@ -485,10 +486,11 @@
 
 .alert-threshold-input {
   width: 72px;
+  font-variant-numeric: tabular-nums;
 }
 
 .alert-threshold-unit {
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
 }
 
@@ -618,7 +620,7 @@
   position: fixed;
   inset: 0;
   z-index: 9;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--color-scrim);
 }
 
 /* --- Small screens -------------------------------------------------------
@@ -686,7 +688,7 @@
 
   .map-toolbar select,
   .map-toolbar .btn-floating {
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
     padding: 0 var(--space-2);
   }
 }

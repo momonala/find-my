@@ -43,30 +43,27 @@ input:focus-visible {
 
 .btn-floating {
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
   height: var(--toolbar-height);
   background: var(--color-surface-translucent);
   backdrop-filter: blur(10px);
   color: var(--color-text);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 0 var(--space-3);
   cursor: pointer;
   box-shadow: var(--shadow-md);
   transition:
     background-color var(--duration-quick) var(--ease-smooth-out),
-    border-color var(--duration-quick) var(--ease-smooth-out),
     color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .btn-floating:hover {
-  border-color: var(--color-accent);
+  background: var(--color-surface);
 }
 
 .btn-floating[aria-pressed="true"] {
   background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #ffffff;
+  color: var(--color-white);
 }
 
 .btn-icon {
@@ -84,7 +81,7 @@ input:focus-visible {
   flex-shrink: 0;
   background: var(--color-border);
   border: none;
-  border-radius: 11px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
   transition: background-color var(--duration-quick) var(--ease-smooth-out);
   padding: 0;
@@ -98,7 +95,7 @@ input:focus-visible {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--color-white);
   transition: transform var(--duration-quick) var(--ease-smooth-out);
 }
 
@@ -131,7 +128,7 @@ input:focus-visible {
   margin: 0;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius);
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
   box-shadow: var(--shadow-md);
   /* Enter only. `hidden` toggles display:none with no opacity change of its
      own, so transitioning `display` here would just hold the banner visible
@@ -165,7 +162,7 @@ input:focus-visible {
    Only genuinely per-dialog differences get their own rule below. */
 
 .app-dialog {
-  border: 1px solid var(--color-border);
+  border: none;
   border-radius: var(--radius-lg);
   background: var(--color-surface);
   color: var(--color-text);
@@ -175,7 +172,7 @@ input:focus-visible {
 }
 
 .app-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--color-scrim);
 }
 
 /* Scale + fade both directions, driven purely by the [open] attribute, so
@@ -245,14 +242,14 @@ input:focus-visible {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
 }
 
 /* Reads as a heading over the fields under it through size, weight and full
-   contrast -- the fields themselves are 0.85rem, regular weight. */
+   contrast -- the fields themselves are one step down, regular weight. */
 .dialog-section-title {
   margin: 0 0 var(--space-3);
-  font-size: 0.95rem;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--color-text);
 }
@@ -264,7 +261,7 @@ input:focus-visible {
 .dialog-input,
 .dialog-select {
   font: inherit;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   background: var(--color-bg);
   color: var(--color-text);
   border: 1px solid var(--color-border);
@@ -294,7 +291,7 @@ input:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   color: var(--color-text);
   padding: var(--space-2) 0;
   cursor: default;

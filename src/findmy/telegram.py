@@ -59,7 +59,7 @@ def _alert_prefix(alert: sqlite3.Row) -> str:
 def send_movement_alert(alert: sqlite3.Row, moved_m: float) -> None:
     """Format and send a movement-alert notification."""
     send_telegram_message(
-        f"{_alert_prefix(alert)} moved {moved_m:.0f}m, " f"over the {alert['threshold_m']:.0f}m threshold"
+        f"{_alert_prefix(alert)} moved {moved_m:.0f}m, over the {alert['threshold_m']:.0f}m threshold"
     )
 
 
