@@ -2,9 +2,10 @@
 // share chrome and field markup, so they share these and the `.app-dialog`
 // styles in shell.css that go with them.
 
-export function createDialog(variantClass) {
+export function createDialog(variantClass, accessibleName) {
   const dialog = document.createElement("dialog");
   dialog.className = `app-dialog ${variantClass}`;
+  dialog.setAttribute("aria-label", accessibleName);
   document.body.append(dialog);
   return dialog;
 }
@@ -55,7 +56,7 @@ export function createActions(...buttons) {
 }
 
 export function sectionTitle(text) {
-  const title = document.createElement("p");
+  const title = document.createElement("h2");
   title.className = "dialog-section-title";
   title.textContent = text;
   return title;

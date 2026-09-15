@@ -363,7 +363,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
   }
 
   function buildMapStyleDialog() {
-    const dialog = createDialog("map-style-dialog");
+    const dialog = createDialog("map-style-dialog", "Map settings");
 
     const styleSelect = createSelect(MAP_STYLES.map((style) => [style.key, style.label]));
     styleSelect.addEventListener("change", () => {
@@ -791,7 +791,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
   let iconDialogTrigger = null;
 
   function buildIconDialog() {
-    const dialog = createDialog("icon-dialog");
+    const dialog = createDialog("icon-dialog", "Set marker emoji");
 
     const form = document.createElement("form");
     form.className = "dialog-form";
@@ -855,7 +855,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
       await loadDevices();
       reloadTracks();
     } catch (error) {
-      handleFatalError(error);
+      reportError(error);
     }
   }
 
@@ -1002,7 +1002,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
   }
 
   function buildAlertDialog() {
-    const dialog = createDialog("alert-dialog");
+    const dialog = createDialog("alert-dialog", "Add or edit alert");
 
     const form = document.createElement("form");
     form.className = "dialog-form";
@@ -1066,7 +1066,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
     for (const device of state.devices) {
       const option = document.createElement("option");
       option.value = device.id;
-      option.textContent = `${device.icon || "❓"} ${device.name}`;
+      option.textContent = device.icon ? `${device.icon} ${device.name}` : device.name;
       alertDialog.deviceSelect.append(option);
     }
 
@@ -1112,7 +1112,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
       renderDeviceList();
       reloadTracks();
     } catch (error) {
-      handleFatalError(error);
+      reportError(error);
     }
   }
 
@@ -1127,7 +1127,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
       renderDeviceList();
       reloadTracks();
     } catch (error) {
-      handleFatalError(error);
+      reportError(error);
     }
   }
 
@@ -1147,7 +1147,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
       // Rebuild from state.alerts so a failed delete doesn't strand a
       // half-collapsed row with inline styles on it.
       renderDeviceList();
-      handleFatalError(error);
+      reportError(error);
     }
   }
 
@@ -1452,10 +1452,10 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
   }
 
   function reloadTracks() {
-    loadTracks().catch(handleFatalError);
+    loadTracks().catch(reportError);
   }
 
-  function handleFatalError(error) {
+  function reportError(error) {
     if (error?.name === "AbortError") return;
     console.error(error);
     showError(error instanceof Error ? error.message : String(error));
@@ -1467,7 +1467,7 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
       updateSortIndicators();
       return refreshAll();
     })
-    .catch(handleFatalError);
+    .catch(reportError);
 
   // The poller writes independently of anyone viewing the dashboard, so keep
   // the view honest for a page left open across several fetch cycles -- but
@@ -1475,6 +1475,6 @@ import { REDUCED_MOTION_QUERY, collapseRow, motionDurationMs } from "/static/mot
   // keep polling forever.
   setInterval(() => {
     if (document.visibilityState !== "visible") return;
-    refreshAll().catch(handleFatalError);
+    refreshAll().catch(reportError);
   }, STATUS_POLL_MS);
 })();
