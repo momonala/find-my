@@ -103,3 +103,6 @@ data/
 # `script(1)` session captures
 typescript
 .claude/
+
+# Local deploy helper (host-specific, never committed)
+deploy.py
