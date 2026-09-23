@@ -52,6 +52,9 @@ def _authenticate() -> PyiCloudService:
             password,
             cookie_directory=str(SESSION_DIR),
             refresh_interval=_DEVICE_REFRESH_SECONDS,
+            # Apple blocks login until updated iCloud terms are accepted, and the
+            # headless poller has no one to click through them.
+            accept_terms=True,
         )
     except PyiCloudFailedLoginException as error:
         raise LoginFailedError(f"Login failed: {error}") from error
