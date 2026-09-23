@@ -1,7 +1,7 @@
 """The Flask app: a shared shell plus one blueprint per feature.
 
 Feature routes live with their feature (src/web/findmy/), not here. This
-module owns only what every page shares -- the landing page, the nav-bar
+module owns only what every page shares -- the root redirect, the nav-bar
 context, the map keys in /api/config -- and the boot wiring: schema
 migrations, the tile cache prune, and the background poller.
 """
@@ -11,7 +11,6 @@ import atexit
 from flask import Flask
 from flask import jsonify
 from flask import redirect
-from flask import render_template
 from flask import url_for
 from flask.typing import ResponseReturnValue
 
@@ -59,8 +58,9 @@ def create_app(*, start_poller: bool = True) -> Flask:
         return {"nav_items": NAV_ITEMS}
 
     @app.get("/")
-    def home() -> str:
-        return render_template("home.html", active_page="home")
+    def home() -> ResponseReturnValue:
+        """Find My is the only page, so the root goes straight to it."""
+        return redirect(url_for("findmy.page"))
 
     @app.get("/dashboard")
     def legacy_dashboard() -> ResponseReturnValue:

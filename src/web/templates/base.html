@@ -15,9 +15,6 @@
 </head>
 <body>
   <nav class="app-nav" aria-label="Pages">
-    <a class="nav-link" href="{{ url_for('home') }}"{% if active_page == 'home' %} aria-current="page"{% endif %}>
-      {{ icon('home') }}<span>Home</span>
-    </a>
     {% for item in nav_items %}
     <a class="nav-link" href="{{ url_for(item.endpoint) }}"{% if active_page == item.slug %} aria-current="page"{% endif %}>
       {{ icon(item.icon) }}<span>{{ item.label }}</span>

@@ -14,8 +14,8 @@ Apple splits this across two unrelated systems, so this project has two backends
 | `src/findmy/airtags.py` | AirTags, Sualio/ACCUTag/Smart Card trackers | Crowdsourced Find My network — nearby Apple devices relay encrypted BLE beacons |
 
 On top of the CLI, `uv run mycloud serve` runs a small web UI and read-only HTTP API backed by a
-once-a-minute background poller and a SQLite history. The UI is a shell with a nav bar: a landing page listing
-its pages, and Find My as the first of them — see [Serving the web UI and API](#serving-the-web-ui-and-api).
+once-a-minute background poller and a SQLite history. The UI is a shell with a nav bar over its pages, with
+Find My as the first of them and the root URL redirecting to it — see [Serving the web UI and API](#serving-the-web-ui-and-api).
 
 Last Updated: 2026-09-04
 
@@ -130,7 +130,7 @@ page shares stays at the top level. Adding a page can't collide with an existing
 
 | Route | Returns |
 |-------|---------|
-| `GET /` | The landing page — one card per entry in `src/web/nav.py` |
+| `GET /` | Redirects to `/findmy` |
 | `GET /findmy` | The Find My dashboard described below (`GET /dashboard` 301s here) |
 | `GET /api/config` | Basemap keys and styles, for any page that draws a map |
 | `GET /api/tiles/google/<map_type>/<z>/<x>/<y>` | One proxied Google basemap tile (see below) |
@@ -246,10 +246,10 @@ my-cloud/
 │   ├── maps/google_tiles.py      # session-minting + disk-cached Google basemap tiles
 │   └── web/
 │       ├── app.py                # the app factory: shell routes + blueprint registration
-│       ├── nav.py                # the page registry the nav and landing page render
+│       ├── nav.py                # the page registry the nav renders
 │       ├── auth.py               # the write token every feature's write routes share
 │       ├── tiles.py              # /api/tiles/* — the basemap proxy's HTTP surface
-│       ├── templates/            # base.html, home.html, _icons.html
+│       ├── templates/            # base.html, _icons.html
 │       ├── static/               # tokens.css, shell.css, and the shared JS modules
 │       └── findmy/               # one feature: page + JSON routes + its own assets
 │           ├── pages.py          # GET /findmy

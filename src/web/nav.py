@@ -1,8 +1,8 @@
 """The pages the shell offers.
 
-The only place the set of pages is written down: base.html's nav and the
-landing page both render whatever this lists. See "Adding a page" in
-README.md for the rest of the steps.
+The only place the set of pages is written down: base.html's nav renders
+whatever this lists. See "Adding a page" in README.md for the rest of the
+steps.
 """
 
 from dataclasses import dataclass
@@ -19,7 +19,6 @@ class NavItem:
     slug: str
     label: str
     endpoint: str
-    summary: str
     icon: str
 
 
@@ -29,6 +28,5 @@ NAV_ITEMS = (
         label="Find My",
         endpoint="findmy.page",
         icon="pin",
-        summary="Devices and AirTags on a live map, with movement and geofence alerts.",
     ),
 )
