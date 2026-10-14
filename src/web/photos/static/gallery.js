@@ -45,7 +45,9 @@ const stateBadges = {
 const refreshButton = document.getElementById("refresh");
 const pruneButton = document.getElementById("prune");
 const pruneConfirm = document.getElementById("prune-confirm");
-const markButtons = [...document.querySelectorAll(".detail-mark")];
+const queue = document.getElementById("prune-queue");
+const queueEmpty = document.getElementById("prune-queue-empty");
+const detailMarks = detail.querySelector(".detail-marks");
 
 // The stored marks in the words the buttons use, for the facts row that shows
 // one back.
@@ -91,13 +93,11 @@ function canRender(asset) {
   return Boolean(asset.relative_path);
 }
 
-// Why there is no picture, said accurately. "Not backed up" is true only of
-// something iCloud still holds -- for a photo you deleted it reads as a
-// complaint about the backup rather than the answer, which is that you
-// deleted it.
+// Why there is no picture, said accurately. Every tile here is an asset iCloud
+// still holds: one whose bytes are in neither place is not in the page at all,
+// so there is no "gone" to say -- `queries._where` leaves those out.
 function missingLabel(asset) {
   if (asset.source_album === "Recently Deleted") return "In the trash";
-  if (!asset.in_icloud) return "Gone";
   // Hidden is excluded from the backup on purpose -- `backup.EXCLUDED_ALBUMS`
   // -- so "not backed up" would read as a gap to go and fix rather than the
   // rule it is. Applies to the album's videos exactly as to its photos.
@@ -469,7 +469,7 @@ async function openDetail(assetId) {
     document.getElementById("detail-title").textContent = asset.filename;
     renderMeta(asset);
 
-    showMarks(asset.id, asset.mark);
+    showMarks(detailMarks, asset.id, asset.mark);
     detail.showModal();
     document.getElementById("detail-meta").scrollTop = 0;
   } catch (error) {
@@ -481,20 +481,29 @@ async function openDetail(assetId) {
 // this is the only thing that knows which mark a pair of places is.
 const MARK_TARGETS = { icloud: ["icloud"], drive: ["drive"], everywhere: ["icloud", "drive"] };
 
-// The id rides on the group so a button only has to know its own target.
-function showMarks(assetId, mark) {
+// Every `.detail-marks` group works the same way, in the detail panel and on
+// each queued row: the asset id rides on the group, the pressed buttons are the
+// state, and one asset showing in both places is two groups to keep in step.
+function markGroups(assetId) {
+  return [...document.querySelectorAll(`.detail-marks[data-id="${CSS.escape(assetId)}"]`)];
+}
+
+function showMarks(group, assetId, mark) {
   const on = MARK_TARGETS[mark] ?? [];
-  markButtons.forEach((button) => button.setAttribute("aria-pressed", String(on.includes(button.dataset.target))));
-  document.querySelector(".detail-marks").dataset.id = assetId;
+  group.dataset.id = assetId;
+  group.dataset.mark = mark ?? "";
+  [...group.querySelectorAll(".detail-mark")].forEach((button) =>
+    button.setAttribute("aria-pressed", String(on.includes(button.dataset.target))),
+  );
 }
 
 // Each button toggles its own place, and every combination of the two is a
 // mark the library stores -- neither place off is no mark at all.
-function nextMark(pressed, target) {
-  const wanted = new Set(pressed);
+function nextMark(mark, target) {
+  const wanted = new Set(MARK_TARGETS[mark] ?? []);
   if (wanted.has(target)) wanted.delete(target);
   else wanted.add(target);
-  return Object.keys(MARK_TARGETS).find((mark) => sameTargets(MARK_TARGETS[mark], [...wanted])) ?? null;
+  return Object.keys(MARK_TARGETS).find((name) => sameTargets(MARK_TARGETS[name], [...wanted])) ?? null;
 }
 
 function sameTargets(a, b) {
@@ -502,14 +511,13 @@ function sameTargets(a, b) {
 }
 
 async function setMark(button) {
-  const assetId = document.querySelector(".detail-marks").dataset.id;
-  const pressed = markButtons
-    .filter((item) => item.getAttribute("aria-pressed") === "true")
-    .map((item) => item.dataset.target);
-  const was = Object.keys(MARK_TARGETS).find((mark) => sameTargets(MARK_TARGETS[mark], pressed)) ?? null;
-  const mark = nextMark(pressed, button.dataset.target);
+  const group = button.closest(".detail-marks");
+  const assetId = group.dataset.id;
+  const was = group.dataset.mark || null;
+  const mark = nextMark(was, button.dataset.target);
   if (mark === was) return;
-  markButtons.forEach((item) => { item.disabled = true; });
+  const buttons = [...document.querySelectorAll(".detail-mark")];
+  buttons.forEach((item) => { item.disabled = true; });
   try {
     await fetchJson(`/api/photos/assets/${encodeURIComponent(assetId)}/mark`, {
       method: "PUT",
@@ -517,17 +525,19 @@ async function setMark(button) {
       body: JSON.stringify({ mark }),
     });
     clearError();
-    showMarks(assetId, mark);
+    markGroups(assetId).forEach((item) => showMarks(item, assetId, mark));
     const card = grid.querySelector(`[data-id="${CSS.escape(assetId)}"]`);
     // Set the value rather than toggling the attribute: an empty attribute
     // would not match the `[data-mark]` levels the outline hangs off.
     if (mark) card?.setAttribute("data-mark", mark);
     else card?.removeAttribute("data-mark");
     countMark(was, mark);
+    // An unmarked asset is no longer queued, so its row goes with the mark.
+    if (!mark) dropQueueRow(assetId);
   } catch (error) {
     showError(error.message);
   } finally {
-    markButtons.forEach((item) => { item.disabled = false; });
+    buttons.forEach((item) => { item.disabled = false; });
   }
 }
 
@@ -541,6 +551,7 @@ function countMark(was, now) {
   if (now) totals[`marked_${now}`] += 1;
   totals.marked += (now ? 1 : 0) - (was ? 1 : 0);
   showTotals(totals);
+  if (pruneConfirm.open) showPruneLines();
 }
 
 // The last totals the server gave, kept up to date here as marks change: the
@@ -581,12 +592,25 @@ function showTotals(totals) {
   // first totals are still being counted off the drive.
   librarySummary.hidden = false;
   lastTotals = totals;
+  // Named for what it opens, not for what the dialog behind it does: the
+  // deleting button is the one inside, after the queue has been read.
   pruneButton.hidden = !totals.marked;
-  pruneButton.textContent = `Delete ${totals.marked.toLocaleString()}`;
+  pruneButton.textContent = `Queued ${totals.marked.toLocaleString()}`;
 }
 
 
+// The counts go up first and the queue is filled behind them: the list is one
+// request off the drive, and the dialog has something to say meanwhile.
 function askToPrune() {
+  showPruneLines();
+  pruneConfirm.showModal();
+  showQueue();
+}
+
+// Re-read from `lastTotals` rather than rendered once, because adjusting a row
+// moves these while the dialog is open: the button must not offer to delete a
+// count that is no longer true.
+function showPruneLines() {
   document.getElementById("prune-confirm-lines").replaceChildren(
     ...MARK_LINES.filter(([key]) => lastTotals[key]).map(([key, wording]) => {
       const line = document.createElement("li");
@@ -594,7 +618,46 @@ function askToPrune() {
       return line;
     }),
   );
-  pruneConfirm.showModal();
+  const go = document.getElementById("prune-go");
+  go.disabled = !lastTotals.marked;
+  go.textContent = lastTotals.marked ? `Delete ${lastTotals.marked.toLocaleString()}` : "Delete";
+}
+
+async function showQueue() {
+  queueEmpty.hidden = true;
+  queue.replaceChildren();
+  try {
+    const { marks } = await fetchJson("/api/photos/marks");
+    queue.replaceChildren(...marks.map(queueRow));
+    queueEmpty.hidden = marks.length > 0;
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+// One queued decision: what it is, what deleting it frees, and the same control
+// the detail panel uses to change or drop it.
+function queueRow(mark) {
+  const row = document.getElementById("prune-queue-row").content.firstElementChild.cloneNode(true);
+  row.dataset.id = mark.asset_id;
+  const thumb = row.querySelector(".prune-queue-thumb");
+  thumb.src = `/api/photos/assets/${encodeURIComponent(mark.asset_id)}/image?size=grid`;
+  thumb.addEventListener("error", () => { thumb.hidden = true; }, { once: true });
+  row.querySelector(".prune-queue-name").textContent = mark.filename;
+  row.querySelector(".prune-queue-facts").textContent = [
+    formatBytes(mark.original_bytes ?? mark.icloud_bytes),
+    mark.in_icloud ? null : "not in iCloud",
+    `queued ${formatDate(mark.marked_at)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  showMarks(row.querySelector(".detail-marks"), mark.asset_id, mark.mark);
+  return row;
+}
+
+function dropQueueRow(assetId) {
+  queue.querySelector(`.prune-queue-row[data-id="${CSS.escape(assetId)}"]`)?.remove();
+  queueEmpty.hidden = queue.children.length > 0;
 }
 
 // The first option is the "any" one the markup ships with, and it is what a
@@ -745,8 +808,11 @@ detail.addEventListener("close", () => {
   video.removeAttribute("src");
   video.load();
 });
-for (const button of markButtons) {
-  button.addEventListener("click", (event) => setMark(event.currentTarget));
-}
+// Delegated, because the queue's rows are built after this runs and every one
+// of them carries the same control.
+document.addEventListener("click", (event) => {
+  const button = event.target.closest(".detail-mark");
+  if (button) setMark(button);
+});
 
 start();

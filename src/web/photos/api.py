@@ -90,6 +90,18 @@ def get_facets() -> ResponseReturnValue:
         return jsonify({"facets": queries.facets(conn), "totals": queries.totals(conn)})
 
 
+@bp.get("/marks")
+def list_marks() -> ResponseReturnValue:
+    """Every decision still waiting on a prune, oldest first.
+
+    Not a filtered `/assets` page: the queue is a list of decisions, so it is
+    ordered by when each was made and carries no paging. A library with more
+    marks pending than fit in one dialog is one where the answer is to prune.
+    """
+    with _reading() as conn:
+        return jsonify({"marks": queries.pending_marks(conn)})
+
+
 @bp.get("/assets/<asset_id>")
 def get_asset(asset_id: str) -> ResponseReturnValue:
     with _reading() as conn:

@@ -105,9 +105,33 @@ def test_a_freed_asset_is_filterable_apart_from_a_live_one(conn: sqlite3.Connect
     """Assets this drive is the only copy of are worth seeing on their own."""
     library.replace_assets(conn, [make_photo("live", "IMG_1.HEIC")])
     library.restore_assets(conn, [make_photo("freed", "IMG_2.HEIC")])
+    # The drive is what a freed asset has left, so the file is the whole reason
+    # it still shows at all.
+    library.record_files(
+        conn,
+        "freed",
+        [BackedUpFile(library.ORIGINAL, "2024/IMG_2~freed.HEIC", 1_000, "hash")],
+        recorded_as="downloaded",
+    )
 
     assert ids(conn, Filters(in_icloud=True)) == ["live"]
     assert ids(conn, Filters(in_icloud=False)) == ["freed"]
+
+
+def test_an_asset_left_in_neither_place_is_not_a_tile(conn: sqlite3.Connection) -> None:
+    """What an `everywhere` prune leaves: a row, and nowhere for its bytes.
+
+    The gallery draws copies, so an asset with none is out of every page and
+    every filter -- there is nothing to show in the slot and nothing to do with
+    it. `get_asset` still answers, because the row is the record it existed.
+    """
+    library.replace_assets(conn, [make_photo("live", "IMG_1.HEIC")])
+    library.restore_assets(conn, [make_photo("pruned", "IMG_2.HEIC")])
+
+    assert ids(conn, Filters()) == ["live"]
+    assert ids(conn, Filters(in_icloud=False)) == []
+    assert ids(conn, Filters(backed_up=False)) == ["live"]
+    assert queries.get_asset(conn, "pruned")["filename"] == "IMG_2.HEIC"
 
 
 def test_assets_with_no_file_on_the_drive_are_filterable(conn: sqlite3.Connection) -> None:

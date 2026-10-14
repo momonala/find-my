@@ -319,6 +319,12 @@ def _where(filters: Filters) -> tuple[str, str, list[Any]]:
         if join:
             joins.add(join)
 
+    # Not a filter but the floor under all of them: an asset whose bytes are in
+    # neither place is a record that a photo existed, not a photo. It has
+    # nothing to draw and nothing to delete, so it takes no slot in the grid.
+    # The row stays in the library, which is where that history belongs.
+    add("(a.in_icloud = 1 OR f.relative_path IS NOT NULL)", join=_FILES)
+
     if filters.album:
         add("a.source_album = ?", filters.album)
     else:

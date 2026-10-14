@@ -356,7 +356,8 @@
 }
 
 .prune-confirm {
-  max-width: 32rem;
+  width: min(42rem, 92vw);
+  max-width: none;
 }
 
 /* Scoped to [open] for the same reason `.photo-detail[open]` is: an
@@ -376,6 +377,74 @@
 .prune-lines {
   margin: 0;
   padding-left: var(--space-4);
+}
+
+/* The queue is the only part of the dialog that grows with the library, so it
+   is the only part that scrolls: the counts above it and the buttons below
+   stay put however much is marked. */
+.prune-queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(48vh, 26rem);
+  overflow-y: auto;
+  border-block: 1px solid var(--color-border);
+}
+
+.prune-queue:empty {
+  border: 0;
+}
+
+.prune-queue-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.prune-queue-row + .prune-queue-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.prune-queue-thumb {
+  grid-column: 1;
+  grid-row: span 2;
+  width: 3rem;
+  height: 3rem;
+  object-fit: cover;
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.prune-queue-name {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.prune-queue-facts {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: 0.75rem;
+}
+
+/* An asset the drive cannot render has no thumbnail, and the row is placed
+   explicitly, so its text has to be told to take the empty column back. */
+.prune-queue-thumb[hidden] ~ .prune-queue-name,
+.prune-queue-thumb[hidden] ~ .prune-queue-facts {
+  grid-column: 1 / 3;
+}
+
+.prune-queue-row .detail-marks {
+  grid-column: 3;
+  grid-row: span 2;
+}
+
+.prune-queue-row .detail-mark {
+  font-size: 0.75rem;
+  padding: var(--space-1) var(--space-2);
 }
 
 .prune-confirm .detail-buttons {

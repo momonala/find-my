@@ -18,6 +18,7 @@ from flask.testing import FlaskClient
 from PIL import Image
 
 from icloud_photo_metadata import library
+from icloud_photo_metadata import queries
 from icloud_photo_metadata import prune as photos_prune
 from icloud_photo_metadata.backup import Download
 from icloud_photo_metadata.backup import MetadataPullFailed
@@ -25,6 +26,7 @@ from icloud_photo_metadata.backup import Outcome
 from icloud_photo_metadata.backup import Survey
 from icloud_photo_metadata.backup import SyncPlan
 from icloud_photo_metadata.library import BackedUpFile
+from icloud_photo_metadata.models import PhotoMetadata
 from icloud_photo_metadata.pull_metadata import PullResult
 from src.web.app import create_app
 from src.web.photos import api as photos_api
@@ -33,6 +35,25 @@ from src.web.photos import pruning as photos_pruning
 from src.web.photos import sync as photos_sync
 from src.web.photos import thumbnails
 from tests.icloud_factories import make_photo
+
+
+def _library_assets(drive: Path) -> list[PhotoMetadata]:
+    """What iCloud holds in the fixture: a backed-up still, a movie, and a gap."""
+    return [
+        make_photo("still", "IMG_1.HEIC", size=(drive / "2024" / "IMG_1~still.HEIC").stat().st_size),
+        make_photo("clip", "IMG_2.MOV", item_type="movie"),
+        make_photo("unbacked", "IMG_3.HEIC"),
+    ]
+
+
+def _alongside(drive: Path, photo: PhotoMetadata) -> None:
+    """Add one asset the way a pull does, leaving the fixture's own in iCloud.
+
+    `replace_assets` records a crawl of everything, so whatever it is not handed
+    has left iCloud -- which is why the fixture's three go back in with it.
+    """
+    with library.library(drive) as conn:
+        library.replace_assets(conn, [*_library_assets(drive), photo])
 
 
 @pytest.fixture
@@ -44,14 +65,7 @@ def drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     Image.new("RGB", (1200, 900), "teal").save(original, "JPEG")
 
     with library.library(directory) as conn:
-        library.replace_assets(
-            conn,
-            [
-                make_photo("still", "IMG_1.HEIC", size=original.stat().st_size),
-                make_photo("clip", "IMG_2.MOV", item_type="movie"),
-                make_photo("unbacked", "IMG_3.HEIC"),
-            ],
-        )
+        library.replace_assets(conn, _library_assets(directory))
         library.record_files(
             conn,
             "still",
@@ -156,6 +170,23 @@ def test_the_gallery_can_show_everything_marked_anywhere(client: FlaskClient) ->
     assert client.get("/api/photos/assets?mark=drive").get_json()["total"] == 1
     assert client.get("/api/photos/assets?mark=everywhere").get_json()["total"] == 1
     assert client.get("/api/photos/assets").get_json()["total"] == 3
+
+
+def test_the_queue_lists_what_is_waiting_on_a_prune(client: FlaskClient) -> None:
+    """What the confirmation shows before deleting: the decisions, not a count."""
+    client.put("/api/photos/assets/clip/mark", json={"mark": "everywhere"})
+    client.put("/api/photos/assets/still/mark", json={"mark": "icloud"})
+
+    marks = client.get("/api/photos/marks").get_json()["marks"]
+
+    assert [(row["asset_id"], row["mark"], row["filename"]) for row in marks] == [
+        ("clip", "everywhere", "IMG_2.MOV"),
+        ("still", "icloud", "IMG_1.HEIC"),
+    ]
+
+    client.put("/api/photos/assets/clip/mark", json={"mark": None})
+
+    assert [row["asset_id"] for row in client.get("/api/photos/marks").get_json()["marks"]] == ["still"]
 
 
 def test_a_mark_filter_the_library_does_not_define_is_refused(client: FlaskClient) -> None:
@@ -398,11 +429,36 @@ def test_a_prune_needs_the_drive_before_it_needs_icloud(
 
 def test_the_gallery_leaves_apples_trash_out_until_it_is_asked_for(client: FlaskClient, drive: Path) -> None:
     """A prune moves an asset here, so it comes back as a tile with no picture."""
-    with library.library(drive) as conn:
-        library.replace_assets(conn, [make_photo("binned", "IMG_9.HEIC", album="Recently Deleted")])
+    _alongside(drive, make_photo("binned", "IMG_9.HEIC", album="Recently Deleted"))
 
     assert client.get("/api/photos/assets").get_json()["total"] == 3
     assert client.get("/api/photos/assets?album=Recently+Deleted").get_json()["total"] == 1
+
+
+def test_an_asset_gone_from_both_places_takes_no_slot_in_the_grid(
+    client: FlaskClient, drive: Path
+) -> None:
+    """After an `everywhere` prune there is nothing left to draw or to delete.
+
+    The row stays in the library, which is the only record the photo existed.
+    What it must not be is a tile: a slot saying "gone" is one you cannot act
+    on, and enough of them turn the grid into a list of what you no longer have.
+    """
+
+    def shown(query: str = "") -> list[str]:
+        return sorted(row["id"] for row in client.get(f"/api/photos/assets{query}").get_json()["assets"])
+
+    assert shown() == ["clip", "still", "unbacked"]
+
+    with library.library(drive) as conn:
+        library.record_gone(conn, "unbacked")
+
+    assert shown() == ["clip", "still"]
+    # No filter reaches it either: it is out of the gallery, not hidden behind
+    # a control. The library still holds the row.
+    assert shown("?in_icloud=false") == []
+    with library.reading(drive) as conn:
+        assert queries.get_asset(conn, "unbacked")["filename"] == "IMG_3.HEIC"
 
 
 def test_a_movie_gets_a_frame_rather_than_a_placeholder(
@@ -465,8 +521,7 @@ def test_a_movie_with_no_copy_on_the_drive_cannot_be_played(client: FlaskClient)
 
 def test_a_card_says_whether_it_is_a_movie_a_browser_can_play(client: FlaskClient, drive: Path) -> None:
     """Apple files animated GIFs as movies, and those are stills to a browser."""
-    with library.library(drive) as conn:
-        library.replace_assets(conn, [make_photo("looping", "IMG_8.GIF", item_type="movie")])
+    _alongside(drive, make_photo("looping", "IMG_8.GIF", item_type="movie"))
 
     playable = {
         asset["id"]: asset["playable"] for asset in client.get("/api/photos/assets").get_json()["assets"]

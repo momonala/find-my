@@ -117,10 +117,15 @@
 </main>
 
 {#- A prune deletes from Apple's servers, so it asks first and says exactly
-    what it is about to take. -#}
+    what it is about to take -- as a list of the assets themselves, not just a
+    count, because the last chance to change your mind is worth spending a
+    scroll on. Every row carries the same two toggles the detail panel does, so
+    a decision can be adjusted or dropped without leaving the queue. -#}
 <dialog id="prune-confirm" class="app-dialog prune-confirm" aria-labelledby="prune-confirm-title">
-  <h2 id="prune-confirm-title">Delete what is marked?</h2>
+  <h2 id="prune-confirm-title">Queued for deletion</h2>
   <ul id="prune-confirm-lines" class="prune-lines"></ul>
+  <ul id="prune-queue" class="prune-queue"></ul>
+  <p id="prune-queue-empty" class="photos-summary" hidden>Nothing is queued.</p>
   <p class="photos-summary">
     What is deleted from iCloud goes to Recently Deleted, where Apple keeps it for 30 days. What is
     deleted from <strong>local</strong> leaves the drive for good, which nothing can undo.
@@ -135,6 +140,23 @@
     <button type="button" id="prune-go" class="btn-floating btn-danger">Delete</button>
   </div>
 </dialog>
+
+{#- One queued asset. A template rather than markup built in JS, so the row
+    reads as markup and the two toggles stay the same control the detail panel
+    uses -- same class, same `data-target`, same pressed state. -#}
+<template id="prune-queue-row">
+  <li class="prune-queue-row">
+    <img class="prune-queue-thumb" alt="" loading="lazy">
+    <span class="prune-queue-name"></span>
+    <span class="prune-queue-facts photos-summary"></span>
+    <div class="detail-marks" role="group" aria-label="Delete from">
+      <button type="button" class="btn-floating detail-mark" data-target="icloud" aria-pressed="false"
+              title="Delete the iCloud copy">iCloud</button>
+      <button type="button" class="btn-floating detail-mark" data-target="drive" aria-pressed="false"
+              title="Delete the copy on the backup drive">Local</button>
+    </div>
+  </li>
+</template>
 
 <dialog id="detail" class="app-dialog photo-detail" aria-labelledby="detail-title">
   <header class="detail-header">

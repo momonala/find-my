@@ -294,6 +294,13 @@ selected is no mark at all, which is why "not marked" has no button of its own.
 **The filter bar can show what you marked**, by location or all of it, which is the question worth asking
 before pruning.
 
+**The queue is reviewable before anything runs.** The toolbar's `Queued n` opens the list of pending
+marks -- thumbnail, filename, what it frees, when it was queued -- ordered by when each decision was made,
+and every row carries the same two toggles the detail panel does. So the last look at what is about to be
+deleted is also where it is changed or dropped, and `Delete n` sits under the list rather than in front of
+it. `GET /api/photos/marks` is that list; it does not page, because a queue too long for the dialog is one
+to prune.
+
 **Marking does not recount the library.** The mark route answers with nothing but the mark. Totals mean a
 scan of all 9,711 assets, which is 18 ms with the drive's pages cached and was measured at 3.7 s without
 -- on the one control a person clicks over and over. The page moves its own count by the one mark that
@@ -345,8 +352,14 @@ the panel rather than showing an empty frame.
 browser is concerned -- they get the photo icon and the image route, like any other still.
 
 **A tile with no picture says why.** `Hidden in iCloud` for the album this tool excludes on purpose,
-`In the trash` for Recently Deleted, `Gone` for something iCloud no longer holds, and `Not backed up` only
-for an asset that really is a gap in the backup.
+`In the trash` for Recently Deleted, and `Not backed up` only for an asset that really is a gap in the
+backup.
+
+**An asset whose bytes are in neither place is not a tile at all.** What an `everywhere` prune leaves is a
+row saying a photo existed: there is nothing to draw in the slot and nothing left to decide about it, so
+the gallery leaves it out of every page and every filter. The row stays in the library, and `plan`,
+`verify` and the detail route still answer for it -- that history is the reason the library lives on the
+drive.
 
 ## Limitations
 
