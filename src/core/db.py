@@ -42,6 +42,7 @@ def get_connection(path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(effective_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
     return conn
 

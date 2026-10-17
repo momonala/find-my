@@ -8,6 +8,8 @@ These tests verify that:
 5. Alerts can be created, listed, deleted, and have their triggered state updated
 """
 
+from dataclasses import replace
+
 from src.findmy.db import alerts_for_device
 from src.findmy.db import all_latest_locations
 from src.findmy.db import create_alert
@@ -253,3 +255,26 @@ def test_init_db_runs_alembic_migrations_to_head(tmp_path):
     assert "battery_level" in device_columns
     tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "tracker_alignment" in tables
+
+
+def _device_updated_at(conn, device_id):
+    return conn.execute("SELECT updated_at FROM devices WHERE id = ?", (device_id,)).fetchone()["updated_at"]
+
+
+def test_unchanged_metadata_does_not_rewrite_the_device_row(conn):
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+    first = _device_updated_at(conn, "tag-1")
+
+    record_fetch(conn, [make_item("tag-1", make_location(52.5, 13.4))])
+
+    assert _device_updated_at(conn, "tag-1") == first
+
+
+def test_battery_change_rewrites_the_device_row(conn):
+    item = make_item("tag-1", make_location(52.5, 13.4))
+    record_fetch(conn, [item])
+    first = _device_updated_at(conn, "tag-1")
+
+    record_fetch(conn, [replace(item, battery_level="Low")])
+
+    assert _device_updated_at(conn, "tag-1") > first

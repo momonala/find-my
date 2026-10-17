@@ -89,6 +89,9 @@ def record_fetch(conn: sqlite3.Connection, items: list[TrackedItem]) -> FetchRes
                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
                     source = excluded.source, battery_level = excluded.battery_level,
                     updated_at = excluded.updated_at
+                WHERE devices.name IS NOT excluded.name OR devices.kind IS NOT excluded.kind
+                    OR devices.source IS NOT excluded.source
+                    OR devices.battery_level IS NOT excluded.battery_level
                 """,
                 (item.id, item.name, item.kind, item.source, item.battery_level, now),
             )
@@ -169,7 +172,7 @@ def set_device_icon(conn: sqlite3.Connection, device_id: str, emoji: str | None)
 
 
 def last_updated(conn: sqlite3.Connection) -> str | None:
-    """When the most recent full poll cycle wrote to `devices`, or None if it never has."""
+    """When any device's metadata last changed, or None if no device was ever recorded."""
     row = conn.execute("SELECT MAX(updated_at) AS last_updated FROM devices").fetchone()
     return cast("str | None", row["last_updated"])
 

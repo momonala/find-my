@@ -28,6 +28,7 @@ from src.findmy.db import list_alerts
 from src.findmy.db import remove_alert
 from src.findmy.db import set_device_icon
 from src.findmy.db import update_alert
+from src.findmy.poller import last_success_at
 from src.web.auth import require_write_token
 from src.web.findmy.schemas import parse_alert_payload
 from src.web.findmy.schemas import parse_alert_update_payload
@@ -53,9 +54,11 @@ def get_config() -> ResponseReturnValue:
 
 @bp.get("/status")
 def get_status() -> ResponseReturnValue:
-    with connection() as conn:
-        updated_at = last_updated(conn)
-    return jsonify({"last_updated": updated_at})
+    polled_at = last_success_at()
+    if polled_at is None:
+        with connection() as conn:
+            polled_at = last_updated(conn)
+    return jsonify({"last_updated": polled_at})
 
 
 @bp.get("/locations")

@@ -12,8 +12,11 @@ Keychain prompt can't be satisfied from a background thread.
 
 import logging
 import threading
+from datetime import UTC
+from datetime import datetime
 
 from src.core.db import connection
+from src.core.db import get_connection
 from src.core.telemetry import metrics
 from src.findmy.airtags import fetch_airtags
 from src.findmy.alerts import check_alerts
@@ -28,6 +31,13 @@ MAX_BACKOFF_SECONDS = 15 * 60
 # Past this many consecutive failures the cause is no longer a passing network
 # blip (an expired session, revoked credentials), so it's logged as an error.
 _PERSISTENT_FAILURE_THRESHOLD = 3
+
+_last_success_at: str | None = None
+
+
+def last_success_at() -> str | None:
+    """When this process last completed a poll cycle, or None if it hasn't yet."""
+    return _last_success_at
 
 
 def _poll_once() -> None:
@@ -64,27 +74,38 @@ def run_forever(stop_event: threading.Event) -> None:
     retrying at full rate: an expired iCloud session fails identically every
     time, and hammering Apple once a minute forever helps nobody.
     """
+    global _last_success_at
     consecutive_failures = 0
-    while not stop_event.is_set():
-        try:
-            _poll_once()
-            consecutive_failures = 0
-            metrics.gauge("consecutive_failures", 0)
-        except Exception:
-            # A network blip or expired session shouldn't kill the poller or the
-            # API -- just keep serving the last-known data and try again later.
-            consecutive_failures += 1
-            metrics.increment("failure")
-            metrics.gauge("consecutive_failures", consecutive_failures)
-            if consecutive_failures >= _PERSISTENT_FAILURE_THRESHOLD:
-                logger.exception(
-                    "Poll cycle failed %d times in a row; the session may need re-authenticating "
-                    "at the console",
-                    consecutive_failures,
-                )
-            else:
-                logger.warning("Poll cycle failed; keeping last known data", exc_info=True)
-        stop_event.wait(_backoff_seconds(consecutive_failures))
+    # SQLite checkpoints and deletes the WAL whenever its last connection closes;
+    # an idle connection held for the poller's lifetime stops that once a minute.
+    wal_keeper = None
+    try:
+        while not stop_event.is_set():
+            try:
+                _poll_once()
+                _last_success_at = datetime.now(UTC).isoformat()
+                if wal_keeper is None:
+                    wal_keeper = get_connection()
+                consecutive_failures = 0
+                metrics.gauge("consecutive_failures", 0)
+            except Exception:
+                # A network blip or expired session shouldn't kill the poller or the
+                # API -- just keep serving the last-known data and try again later.
+                consecutive_failures += 1
+                metrics.increment("failure")
+                metrics.gauge("consecutive_failures", consecutive_failures)
+                if consecutive_failures >= _PERSISTENT_FAILURE_THRESHOLD:
+                    logger.exception(
+                        "Poll cycle failed %d times in a row; the session may need re-authenticating "
+                        "at the console",
+                        consecutive_failures,
+                    )
+                else:
+                    logger.warning("Poll cycle failed; keeping last known data", exc_info=True)
+            stop_event.wait(_backoff_seconds(consecutive_failures))
+    finally:
+        if wal_keeper is not None:
+            wal_keeper.close()
 
 
 def start_background_poller() -> threading.Event:

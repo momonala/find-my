@@ -72,3 +72,17 @@ def test_run_forever_stops_when_the_event_is_set(monkeypatch):
     monkeypatch.setattr(poller, "_poll_once", lambda: pytest.fail("should not poll when already stopped"))
 
     poller.run_forever(stop_event)
+
+
+def test_run_forever_records_when_a_cycle_succeeded(tmp_path, monkeypatch):
+    import src.core.db as core_db
+
+    monkeypatch.setattr(core_db, "DB_PATH", tmp_path / "findmy.db")
+    core_db.init_db()
+    monkeypatch.setattr(poller, "_last_success_at", None)
+    stop_event = threading.Event()
+    monkeypatch.setattr(poller, "_poll_once", stop_event.set)
+
+    poller.run_forever(stop_event)
+
+    assert poller.last_success_at() is not None
